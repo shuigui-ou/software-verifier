@@ -1,0 +1,14 @@
+# 运行时生成 / 本地日志（非源码）
+evolution/learnings.jsonl
+evolution/evolution.md
+*.log
+
+# 依赖（按需安装，不随仓库）
+node_modules/
+
+# 验证产物（按需生成）
+verify_report/
+shots/
+
+# 系统
+.DS_Store

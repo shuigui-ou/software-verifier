@@ -1,0 +1,62 @@
+[
+  {
+    "id": "dom-hidden-container",
+    "category": "显隐/容器",
+    "symptom": "目标元素在隐藏容器内（如 #moreMenu 默认 hidden、折叠面板、未激活 tab），clickSel 报 element is not visible，或被遮罩拦截报 intercepts pointer events。",
+    "patterns": ["not visible", "is not visible", "intercepts pointer events", "modal intercepts", "hidden"],
+    "fix": "先 clickText 打开菜单/展开面板/切到对应 tab，再 clickSel 目标；若仍被遮罩拦截，用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
+    "apps": ["积木计划工作台 (block-workplan)"],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "selector-nth-siblings",
+    "category": "选择器精度",
+    "symptom": "列表/树中同名按钮（每块一个 data-act）用 nth 点错对象，例如点了嵌套子块的「降级」而非新增块的「降级」。",
+    "patterns": ["nth", "降级", "升级", "data-act", "sibling"],
+    "fix": "setup 里用 exec 记录目标对象 id（如 state.plan[1].id），再 exec `document.querySelector('[data-id=\"ID\"] [data-act=\"x\"]').click()` 精确触发，避免 nth 歧义。",
+    "apps": ["积木计划工作台 (block-workplan)"],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "assert-emptyOnlyFill",
+    "category": "断言语义",
+    "symptom": "被测功能仅对「空字段」生效（如变量联动 linkFill 只填空字段），断言「被全局值填充」却未清空原值，导致误报失败。",
+    "patterns": ["变量联动", "linkFill", "只填空", "空字段", "联动填充"],
+    "fix": "这是软件设计（仅填空字段）。验证此类功能时，先在 setup 用 exec 清空目标字段再触发，断言才成立；非 bug。",
+    "apps": ["积木计划工作台 (block-workplan)"],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "engine-autonav",
+    "category": "引擎/环境",
+    "symptom": "browser 驱动启动后 page 停在 about:blank，所有功能 0/N 失败（clickText/waitSel 全找不到）。",
+    "patterns": ["about:blank", "0/18", "0 通过", "导航"],
+    "fix": "verify.cjs 已修复：启动即自动 goto(BASE+\"/\")。若仍 0/N，检查 --url 是否可达、被测静态服务器是否已起（如 python -m http.server）。",
+    "apps": ["通用"],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "action-timeout",
+    "category": "行动性超时",
+    "symptom": "clickText/clickSel 超时：element not found / not stable / not enabled。",
+    "patterns": ["Timeout", "waiting for element", "not stable", "not found", "exceeded"],
+    "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
+    "apps": ["通用"],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  }
+]

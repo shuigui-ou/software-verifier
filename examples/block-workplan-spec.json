@@ -1,0 +1,732 @@
+{
+  "app": "积木计划工作台 (block-workplan)",
+  "features": [
+    {
+      "id": "F01",
+      "name": "载入示例（委托单→测试类型→工步 三层）",
+      "type": "ui",
+      "group": "基础",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('.block-card').length >= 3",
+          "desc": "示例已铺出 >=3 个积木卡"
+        },
+        {
+          "eval": "!!(function(){ var s=[].slice.call(document.querySelectorAll('.sort-no')).map(function(e){return e.textContent.trim();}); return s.some(function(t){return /^\\d+\\.\\d+$/.test(t);}); })()",
+          "desc": "存在层级式编号如 1.1"
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "name": "清空画布",
+      "type": "ui",
+      "group": "基础",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "清空画布"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('.block-card').length === 0",
+          "desc": "画布已清空（0 积木卡）"
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "name": "设置弹窗 打开/关闭",
+      "type": "ui",
+      "group": "基础",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "设置"
+        },
+        {
+          "do": "assert",
+          "eval": "document.getElementById('modal').classList.contains('show')",
+          "desc": "设置弹窗已打开"
+        },
+        {
+          "do": "clickSel",
+          "sel": ".modal-close"
+        },
+        {
+          "do": "assert",
+          "eval": "!document.getElementById('modal').classList.contains('show')",
+          "desc": "设置弹窗已关闭"
+        }
+      ],
+      "asserts": []
+    },
+    {
+      "id": "F04",
+      "name": "新增积木类型（含载入工单标准字段）",
+      "type": "ui",
+      "group": "积木库",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "设置"
+        },
+        {
+          "do": "clickSel",
+          "sel": ".tab[data-tab=\"lib\"]"
+        },
+        {
+          "do": "clickSel",
+          "sel": "#addTpl"
+        },
+        {
+          "do": "waitSel",
+          "sel": "#tName",
+          "timeout": 5000
+        },
+        {
+          "do": "fillSel",
+          "sel": "#tName",
+          "value": "验证积木X"
+        },
+        {
+          "do": "clickText",
+          "text": "载入工单标准字段"
+        },
+        {
+          "do": "clickText",
+          "text": "保存"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.getElementById('libraryList').innerText.includes('验证积木X')",
+          "desc": "新积木类型已加入积木库"
+        }
+      ]
+    },
+    {
+      "id": "F05",
+      "name": "库内组合（绑成组合并拉取）",
+      "type": "ui",
+      "group": "积木库",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "window.__before = document.querySelectorAll('.block-card').length;"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickSel",
+          "sel": ".lib-sel",
+          "nth": 0
+        },
+        {
+          "do": "clickSel",
+          "sel": ".lib-sel",
+          "nth": 1
+        },
+        {
+          "do": "clickSel",
+          "sel": "#btnMakeCombo"
+        },
+        {
+          "do": "waitSel",
+          "sel": "#cbSave",
+          "timeout": 5000
+        },
+        {
+          "do": "clickText",
+          "text": "保存组合"
+        },
+        {
+          "do": "waitSel",
+          "sel": "[data-pullcombo]",
+          "timeout": 5000
+        },
+        {
+          "do": "clickSel",
+          "sel": "[data-pullcombo]",
+          "nth": 0
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('.block-card').length > (window.__before||0)",
+          "desc": "拉取组合后画布积木数增加"
+        }
+      ]
+    },
+    {
+      "id": "F06",
+      "name": "添加子级",
+      "type": "ui",
+      "group": "层级",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "window.__before = document.querySelectorAll('.block-card').length;"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "添加子级"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".preset-menu .preset-item",
+          "timeout": 5000
+        },
+        {
+          "do": "clickSel",
+          "sel": ".preset-menu .preset-item",
+          "nth": 0
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('.block-card').length > (window.__before||0)",
+          "desc": "添加子级后积木数 +1"
+        }
+      ]
+    },
+    {
+      "id": "F07",
+      "name": "降级/升级（层级重归属）",
+      "type": "ui",
+      "group": "层级",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "window.__c0 = (state.plan[0] && state.plan[0].children) ? state.plan[0].children.length : 0;"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "添加同级"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".preset-menu .preset-item",
+          "timeout": 5000
+        },
+        {
+          "do": "clickSel",
+          "sel": ".preset-menu .preset-item",
+          "nth": 0
+        },
+        {
+          "do": "exec",
+          "js": "window.__newId = (state.plan[1] && state.plan[1].id) ? state.plan[1].id : null;"
+        },
+        {
+          "do": "exec",
+          "js": "(()=>{ var id=window.__newId; if(!id) return; var card=document.querySelector('.block-card[data-id=\"'+id+'\"]'); if(!card) return; var btn=card.querySelector('[data-act=\"indent\"]'); if(btn) btn.click(); })()"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ try { return state.plan.length === 1 && state.plan[0].children.length === (window.__c0||0)+1; } catch(e){ return false; } })()",
+          "desc": "降级后新块成为委托单的子级（plan[0].children 比初始多 1）"
+        }
+      ]
+    },
+    {
+      "id": "F08",
+      "name": "折叠/展开 层级",
+      "type": "ui",
+      "group": "层级",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "window.__before = document.querySelectorAll('.block-card').length;"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "折叠"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('.block-card').length < (window.__before||99)",
+          "desc": "折叠委托单后子积木被收起（卡数减少）"
+        }
+      ]
+    },
+    {
+      "id": "F10",
+      "name": "🧩 填充模板",
+      "type": "ui",
+      "group": "特殊按键",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "填充模板"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var c=document.querySelector('.block-card'); if(!c) return false; var t=c.querySelector('.block-content'); return t && (t.value||'').length>0; })()",
+          "desc": "委托单填充模板后内容非空"
+        }
+      ]
+    },
+    {
+      "id": "F11",
+      "name": "📝 插入预设短语",
+      "type": "ui",
+      "group": "特殊按键",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "state.presets.push('进行中验证'); save();"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "插入预设"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".preset-menu .preset-item",
+          "timeout": 5000
+        },
+        {
+          "do": "clickSel",
+          "sel": ".preset-menu .preset-item",
+          "nth": 0
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var c=document.querySelector('.block-card'); if(!c) return false; var t=c.querySelector('.block-content'); return t && (t.value||'').includes('进行中验证'); })()",
+          "desc": "插入预设后内容含预设短语"
+        }
+      ]
+    },
+    {
+      "id": "F12",
+      "name": "🔗 变量联动（全局变量填空）",
+      "type": "ui",
+      "group": "特殊按键",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "state.globals.client='联动甲方'; if(state.plan[0]) state.plan[0].fields.client=''; save();"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "变量联动"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var c=document.querySelector('.block-card'); if(!c) return false; var i=c.querySelector('[data-fkey=\"client\"]'); return i && (i.value||'')==='联动甲方'; })()",
+          "desc": "变量联动后 client 字段被全局值填充"
+        }
+      ]
+    },
+    {
+      "id": "F13",
+      "name": "⚡ 一键生成全部",
+      "type": "ui",
+      "group": "特殊按键",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "state.globals.tester='批量测试员'; save();"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "一键生成全部"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var n=0; document.querySelectorAll('.block-content').forEach(function(t){ if((t.value||'').trim()) n++; }); return n>=2; })()",
+          "desc": "一键生成后 >=2 个积木内容被填充"
+        }
+      ]
+    },
+    {
+      "id": "F14",
+      "name": "⏱ 计算排期（跳过周日）",
+      "type": "ui",
+      "group": "排期",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "state.globals['计划开始日']='2026-08-24'; save();"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "计算排期"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var ok=false; document.querySelectorAll('[data-fkey=\"planEnd\"]').forEach(function(i){ if((i.value||'').trim()) ok=true; }); return ok; })()",
+          "desc": "排期计算后工步计划完成时间被回填"
+        }
+      ]
+    },
+    {
+      "id": "F15",
+      "name": "💼 任务模板（保存/拉取）",
+      "type": "ui",
+      "group": "任务模板",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        },
+        {
+          "do": "exec",
+          "js": "window.__before = document.querySelectorAll('.block-card').length;"
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "任务模板"
+        },
+        {
+          "do": "waitSel",
+          "sel": "#saveTask",
+          "timeout": 5000
+        },
+        {
+          "do": "clickText",
+          "text": "保存当前画布为任务"
+        },
+        {
+          "do": "assert",
+          "eval": "document.getElementById('taskList').innerText.includes('自动验证')",
+          "desc": "任务模板已保存"
+        },
+        {
+          "do": "exec",
+          "js": "(()=>{ var el=document.querySelector('#taskList [data-pull]'); if(el) el.click(); })()"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var c=document.querySelectorAll('.block-card').length; return c > (window.__before||6); })()",
+          "desc": "拉取任务模板后画布积木数增加"
+        }
+      ]
+    },
+    {
+      "id": "F16",
+      "name": "📤 导出(JSON)",
+      "type": "ui",
+      "group": "导入导出",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "导出(JSON)"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var t=document.getElementById('toast'); return t && (t.textContent||'').includes('已导出 JSON'); })()",
+          "desc": "导出 JSON 触发下载（toast 提示）"
+        }
+      ]
+    },
+    {
+      "id": "F17",
+      "name": "左侧栏 收起/展开",
+      "type": "ui",
+      "group": "布局",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "收起"
+        },
+        {
+          "do": "assert",
+          "eval": "document.querySelector('.layout').classList.contains('collapsed')",
+          "desc": "侧栏已收起"
+        },
+        {
+          "do": "clickText",
+          "text": "展开"
+        },
+        {
+          "do": "assert",
+          "eval": "!document.querySelector('.layout').classList.contains('collapsed')",
+          "desc": "侧栏已展开"
+        }
+      ],
+      "asserts": []
+    },
+    {
+      "id": "F18",
+      "name": "＋ 新建项目",
+      "type": "ui",
+      "group": "项目",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "waitSel",
+          "sel": "#btnNewProject",
+          "timeout": 5000
+        },
+        {
+          "do": "clickSel",
+          "sel": "#btnNewProject"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "(function(){ var s=document.getElementById('projectSelect'); return s && [].slice.call(s.options).some(function(o){return (o.textContent||'').includes('自动验证');}); })()",
+          "desc": "新项目已创建并出现在项目下拉"
+        }
+      ]
+    },
+    {
+      "id": "F19",
+      "name": "🧹 清积木库",
+      "type": "ui",
+      "group": "积木库",
+      "setup": [
+        {
+          "do": "exec",
+          "js": "(()=>{ try{ if(typeof loadSample==='function'){ loadSample(); } }catch(e){} })()"
+        },
+        {
+          "do": "waitSel",
+          "sel": ".block-card",
+          "timeout": 8000
+        }
+      ],
+      "steps": [
+        {
+          "do": "clickText",
+          "text": "更多"
+        },
+        {
+          "do": "clickText",
+          "text": "清积木库"
+        }
+      ],
+      "asserts": [
+        {
+          "eval": "document.querySelectorAll('#libraryList .lib-card').length === 0",
+          "desc": "积木库已清空"
+        }
+      ]
+    }
+  ]
+}
