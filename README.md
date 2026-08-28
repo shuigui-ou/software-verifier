@@ -5,6 +5,8 @@
 > 🚫 **只验证，不修复被测软件**。跑完一次即出报告，是否修复由人决策。
 > ✨ **自带自进化知识库**：每次跑完把踩的坑沉淀成可复用解法，并支持**贡献回流**——用的人越多，playbook 越准越强。
 
+🔗 **已上架 SkillHub**：[软件功能全量验证器](https://skillhub.cn/skills/software-verifier)（v1.0.0，免费）
+
 ## 能力
 
 - 驱动可插拔：`browser`（默认，无头 Edge）/ `electron` / `miniprogram` / `appium`
