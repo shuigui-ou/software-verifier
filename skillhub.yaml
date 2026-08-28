@@ -4,7 +4,7 @@ skill:
   name: software-verifier
   displayName: 软件功能全量验证器
   version: 1.0.0
-  author: your-github-id
+  author: user_12807b25
   category: 开发工具
   tags:
     - 软件测试
@@ -33,10 +33,7 @@ skill:
     - evolve.cjs
     - contribute.cjs
     - drivers/dom.js
-    - drivers/dom.js
     - drivers/miniprogram.js
     - drivers/appium.js
     - evolution/pitfalls.json
-    - evolution/evolution.md
     - examples/block-workplan-spec.json
-    - icon.png
