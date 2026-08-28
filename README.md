@@ -6,6 +6,7 @@
 > ✨ **自带自进化知识库**：每次跑完把踩的坑沉淀成可复用解法，并支持**贡献回流**——用的人越多，playbook 越准越强。
 
 🔗 **已上架 SkillHub**：[软件功能全量验证器](https://skillhub.cn/skills/software-verifier)（v1.0.0，免费）
+🔗 **GitHub 开源**：[shuigui-ou/software-verifier](https://github.com/shuigui-ou/software-verifier)（源码 · PR · 贡献回流）
 
 ## 能力
 
@@ -20,7 +21,7 @@
 ### A. Git（推荐，便于贡献）
 
 ```bash
-git clone <你的仓库地址> ~/.workbuddy/skills/software-verifier
+git clone https://github.com/shuigui-ou/software-verifier.git ~/.workbuddy/skills/software-verifier
 # 或软链： ln -s "$(pwd)/software-verifier" ~/.workbuddy/skills/software-verifier
 ```
 

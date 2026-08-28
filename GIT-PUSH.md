@@ -1,7 +1,7 @@
 # 上传 software-verifier 到 GitHub（详尽步骤）
 
 > 目的：把技能源码公开到 GitHub，承接「贡献回流」闭环——别人提 PR 进主干，你合并后重新打包上架 SkillHub，全量用户下一版即受益。
-> 当前本地状态：`master` 分支，已提交到 `8b89d20`，无 remote，工作区干净。
+> 当前本地状态：已推送至 `https://github.com/shuigui-ou/software-verifier`（`master` 分支，`origin` remote 已建，跟踪 `origin/master`）。
 
 ---
 
@@ -32,11 +32,13 @@
 gh auth login
 # 3) 进入技能目录
 cd ~/.workbuddy/skills/software-verifier
-# 4) 建公开仓库并直接推送当前分支
-gh repo create software-verifier --public ^
-  --description "像真人一样按说明书把软件功能全量验证一遍，带自进化知识库与贡献回流" ^
-  --source . --remote origin --push --branch master
+# 4) 建公开仓库并直接推送当前分支（PowerShell 用反引号 ` 续行；或直接写成一整行）
+gh repo create software-verifier --public `
+  --description "像真人一样按说明书把软件功能全量验证一遍，带自进化知识库与贡献回流" `
+  --source . --remote origin --push
 ```
+> 注意：上面用的是 PowerShell 的反引号 `` ` `` 续行。若你是在 **cmd** 里跑，把每行末尾的 `` ` `` 换成 `^`。最稳妥是复制成**一整行**粘贴：
+> `gh repo create software-verifier --public --description "像真人一样按说明书把软件功能全量验证一遍，带自进化知识库与贡献回流" --source . --remote origin --push`
 > 成功后仓库在 `https://github.com/<你的账号>/software-verifier`。`gh` 会自动加好 `origin` remote 并推送。
 
 ---
