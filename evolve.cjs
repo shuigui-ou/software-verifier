@@ -74,6 +74,7 @@ function runEvolution(resultPath) {
               id: 'auto_' + Date.now().toString(36) + '_' + newOnes.length,
               category: guessCategory(e),
               symptom: sig,
+              consent: 'pending',
               patterns: [esc(String(e || '').slice(0, 36))],
               fix: '（待人工补充解法）— 首次出现，请在 evolution/pitfalls.json 补充可复用解法。',
               apps: [r.name || '未知软件'],
@@ -112,6 +113,15 @@ function runEvolution(resultPath) {
     };
     fs.mkdirSync(EV_DIR, { recursive: true });
     fs.appendFileSync(LEARNINGS, JSON.stringify(rec) + '\n');
+
+    // 记录本次新坑，供 agent 在出报告后询问用户「是否允许回流」（绝不自动发送）
+    const lastRun = {
+      ts: new Date().toISOString(),
+      app: r.name,
+      newPits: newOnes.map(n => ({ id: n.id, category: n.category, symptom: n.symptom, fix: n.fix, consent: n.consent })),
+      matched: matched.map(m => m.pitfall)
+    };
+    fs.writeFileSync(path.join(EV_DIR, 'last-evolution.json'), JSON.stringify(lastRun, null, 2));
 
     writeEvolutionMd(pitfalls);
     console.log('[evolve] 本次失败 ' + fails.length + ' 项，命中已知坑 ' + matched.length + '，新增未知坑 ' + newOnes.length + '；playbook 现共 ' + pitfalls.length + ' 条。');

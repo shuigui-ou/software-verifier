@@ -14,7 +14,7 @@
 - 步骤 DSL 驱动：`clickText` / `clickSel` / `fillSel` / `fillNear` / `wait` / `exec` / `screenshot` / `assert` / `ai`
 - 断言丰富：`sel` / `notSel` / `includes` / `eval`
 - 自进化：命中已知坑 → 报告附 `💡 解法`；未命中 → 自动生成新坑
-- 贡献回流：本地新坑 `--make` 打包 → 维护者 `--merge` 合并进共享 playbook
+- 贡献回流：本地新坑经用户同意后 `--make --grant` 打包 → 维护者 `--merge` 合并进共享 playbook（opt-in，绝不自动发送）
 
 ## 安装（三选一）
 
@@ -62,20 +62,22 @@ open verify_report/VERIFY-报告.html
 
 spec 写法见 `SKILL.md` →「spec 格式」一节，或参考 `examples/block-workplan-spec.json`。
 
-## 贡献回流（让所有人变强）
+## 贡献回流（让所有人变强 · opt-in，绝不自动发送）
 
-本 skill 的价值随使用人数增长。踩到的新坑请回流：
+本 skill 的价值随使用人数增长。回流**完全手动、需你同意**——识别到新坑时，skill 会主动问你「是否允许回流」，你同意才打包；**打包出的 bundle 也不会自动上传**，需你手动发回维护者。
 
 ```bash
-# 你跑完 verify 后，未命中的新失败已被写成 auto_* 新坑
-node contribute.cjs --make     # 打包本机新坑 → evolution/contrib/contribution-<ts>.json
-node contribute.cjs --status   # 看「已共享 / 待提交」计数
-# 把 bundle 提 PR 或发给维护者
+# 你跑完 verify 后，未命中的新失败被写成 auto_* 新坑（consent: pending）
+node contribute.cjs --status                       # 看「已共享 / 已授权待提交 / 未授权」计数
+node contribute.cjs --make --grant <id1>,<id2>     # 经你同意后，打包已授权新坑 → evolution/contrib/contribution-<ts>.json
+node contribute.cjs --make --decline <id>          # 你拒绝的坑仅留本地，永不打包
+# 把 bundle 提 PR 或发给维护者（脚本不代发）
 # 维护者侧：
-node contribute.cjs --merge <bundle.json>   # 合并进发布版 pitfalls.json 并重算 Playbook
+node contribute.cjs --merge <bundle.json>          # 合并进发布版 pitfalls.json 并重算 Playbook
 ```
 
-详见 `CONTRIBUTING.md`。
+- 行为开关：`evolution/contrib.json` 的 `mode` → `ask`（默认，每遇新坑询问）/ `always`（自动授权并打包，仍手动发送）/ `never`（永不回流）。
+- 详见 `CONTRIBUTING.md` 与 `SKILL.md` →「贡献回流」。
 
 ## 许可
 

@@ -11,10 +11,15 @@
  *   维护者 contribute --merge <bundle> → 合并进发布版 pitfalls.json → 重算 Playbook
  *     → 重新分发（上架市场 / 发新版 zip）
  *
+ * 回流授权（opt-in，绝不自动发送）：
+ *   新坑默认 consent=pending。只有经用户同意(consent=granted)的坑才会被 --make 打包；
+ *   拒绝(consent=declined)或尚未授权的坑只留本地，永远不会进 bundle。
+ *
  * 用法：
- *   node contribute.cjs --make          打包本地未共享的新坑 → evolution/contrib/contribution-<ts>.json
- *   node contribute.cjs --status        查看 已共享/待提交 计数
+ *   node contribute.cjs --make [--grant id,id] [--decline id,id]  打包已授权的新坑（先按用户答复标记授权/拒绝）
+ *   node contribute.cjs --status        查看 已共享 / 已授权待提交 / 未授权 计数
  *   node contribute.cjs --merge <文件>  合并他人 bundle 进本地 playbook
+ *   注：打包出的 bundle 需使用者手动发回维护者，脚本不自动发送。
  */
 'use strict';
 const fs = require('fs');
@@ -33,14 +38,37 @@ function loadLedger() { try { return JSON.parse(fs.readFileSync(LEDGER, 'utf8'))
 function saveLedger(l) { fs.mkdirSync(CONTRIB_DIR, { recursive: true }); fs.writeFileSync(LEDGER, JSON.stringify(l, null, 2)); }
 
 function pendingPits(pits, ledger) {
-  return pits.filter(p => !p.shared && !ledger.shared.includes(p.id));
+  // 只打包「已授权回流(consent=granted) 且 尚未共享」的坑
+  return pits.filter(p => !p.shared && !ledger.shared.includes(p.id) && p.consent === 'granted');
 }
 
-function make() {
+function setConsent(ids, value) {
+  const pits = loadPitfalls();
+  const set = new Set(ids);
+  let n = 0;
+  for (const p of pits) if (set.has(p.id)) { p.consent = value; n++; }
+  if (n) savePitfalls(pits);
+  return n;
+}
+
+function make(opts) {
+  opts = opts || {};
+  if (opts.grant && opts.grant.length) {
+    const n = setConsent(opts.grant, 'granted');
+    console.log('[contribute] 已授权回流 ' + n + ' 条（标记为 consent=granted）。');
+  }
+  if (opts.decline && opts.decline.length) {
+    const n = setConsent(opts.decline, 'declined');
+    console.log('[contribute] 已拒绝回流 ' + n + ' 条（仅留本地，不会打包）。');
+  }
   const pits = loadPitfalls();
   const ledger = loadLedger();
   const pend = pendingPits(pits, ledger);
-  if (!pend.length) { console.log('[contribute] 没有待提交的新坑，知识库已是最新共享态。'); return; }
+  const noConsent = pits.filter(p => !p.shared && !ledger.shared.includes(p.id) && p.consent !== 'granted').length;
+  if (!pend.length) {
+    console.log('[contribute] 没有「已授权且待提交」的新坑。' + (noConsent ? '（另有 ' + noConsent + ' 条未授权，需先 --grant <id> 经用户同意）' : ''));
+    return;
+  }
   fs.mkdirSync(CONTRIB_DIR, { recursive: true });
   const bundle = {
     skill: 'software-verifier',
@@ -57,8 +85,8 @@ function make() {
   savePitfalls(pits);
   ledger.shared.push(...pend.map(p => p.id));
   saveLedger(ledger);
-  console.log('[contribute] 已打包 ' + pend.length + ' 条新坑 → ' + f);
-  console.log('[contribute] 把该文件发回维护者（提 PR / 丢共享目录 / 贴表单）。维护者执行：');
+  console.log('[contribute] 已打包 ' + pend.length + ' 条已授权新坑 → ' + f);
+  console.log('[contribute] 该文件需你手动发回维护者（提 PR / 丢共享目录 / 贴表单），脚本不会自动发送。维护者执行：');
   console.log('           node contribute.cjs --merge "' + f + '"');
 }
 
@@ -95,22 +123,26 @@ function status() {
   const pits = loadPitfalls();
   const ledger = loadLedger();
   const shared = pits.filter(p => p.shared).length;
-  const pend = pendingPits(pits, ledger).length;
-  console.log('[contribute] 共 ' + pits.length + ' 条坑：已共享 ' + shared + '，待提交 ' + pend + '。');
+  const granted = pendingPits(pits, ledger).length;
+  const noConsent = pits.filter(p => !p.shared && !ledger.shared.includes(p.id) && p.consent !== 'granted').length;
+  console.log('[contribute] 共 ' + pits.length + ' 条坑：已共享 ' + shared + '，已授权待提交 ' + granted + '，未授权(留本地) ' + noConsent + '。');
 }
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  let mode = null, file = null;
+  let mode = null, file = null, grant = [], decline = [];
+  const splitIds = (s) => String(s).split(/[ ,]+/).filter(Boolean);
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--make') mode = 'make';
     else if (args[i] === '--status') mode = 'status';
     else if (args[i] === '--merge') { mode = 'merge'; file = args[++i]; }
+    else if (args[i] === '--grant') { mode = 'make'; grant = splitIds(args[++i]); }
+    else if (args[i] === '--decline') { mode = 'make'; decline = splitIds(args[++i]); }
   }
-  if (!mode) { console.error('用法: node contribute.cjs --make | --status | --merge <bundle.json>'); process.exit(2); }
-  if (mode === 'make') make();
+  if (!mode) { console.error('用法: node contribute.cjs --make [--grant id,id] [--decline id,id] | --status | --merge <bundle.json>'); process.exit(2); }
+  if (mode === 'make') make({ grant, decline });
   else if (mode === 'status') status();
   else if (mode === 'merge') { if (!file) { console.error('缺少 bundle 文件'); process.exit(2); } merge(file); }
 }
 
-module.exports = { make, merge, status, pendingPits };
+module.exports = { make, merge, status, pendingPits, setConsent };

@@ -9,12 +9,15 @@ const zlib = require('zlib');
 const ROOT = __dirname;
 const OUT = path.resolve(ROOT, '..', 'software-verifier.zip');
 
-const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots']);
+const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots', 'contrib']);
 const SKIP_FILE = (p) => {
   if (p.endsWith('.log')) return true;
   if (p.endsWith('.gitignore')) return true;
   if (p.endsWith('evolution/learnings.jsonl')) return true;
   if (p.endsWith('evolution/evolution.md')) return true;
+  // 回流本地状态不随 skill 包发布
+  if (p.endsWith('evolution/last-evolution.json')) return true;
+  if (p.endsWith('evolution/contrib-ledger.json')) return true;
   // SkillHub 上传包禁止二进制文件，图标需单独在表单「图标」处上传
   if (/\.(png|jpe?g|gif|ico|webp|bmp)$/i.test(p)) return true;
   return false;

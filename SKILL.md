@@ -36,22 +36,31 @@ icon: icon.png
 每次 `verify.cjs` 跑完，会自动调用 `evolve.cjs`：
 
 - 扫描 `result.json` 的失败与错误，命中 `evolution/pitfalls.json` 里的**已知坑**就累加命中次数，并在报告错误后附 `💡 已知坑[id]: 解法`；
-- 没命中的新失败，自动生成一条新坑写入 playbook（去重）；
+- 没命中的新失败，自动生成一条新坑写入 playbook（去重）；新坑默认 `consent: pending`，并写入 `evolution/last-evolution.json` 供出报告后询问是否回流；
 - 把本次运行追加进 `evolution/learnings.jsonl`，并重算 `evolution/evolution.md`（人类可读 Playbook，按命中排序）。
 
 知识库存于**用户级 skill 目录**，随本机所有项目累积。写新 spec 前先扫一眼 `evolution/evolution.md`，把规避写法直接写进 spec，可大幅减少误报。
 
-## 🤝 贡献回流（让所有人变强）
+## 🤝 贡献回流（让所有人变强 · opt-in，绝不自动发送）
 
-`evolution/` 默认是本机本地——各装一份不会汇总。要真正"人越多越强"，把各自踩的坑**回流**到共享 playbook：
+`evolution/` 默认是本机本地——各装一份不会汇总。要真正"人越多越强"，把各自踩的坑**回流**到共享 playbook。回流**完全手动、需用户同意**，skill 不会联网回传任何数据。
 
-1. **出坑**：你跑 verify 后，evolve 自动把未命中的新失败写成 `auto_*` 新坑。
-2. **打包**：`node contribute.cjs --make` → 生成 `evolution/contrib/contribution-<ts>.json`（只含你机器上的新坑，已共享坑不再重复）。
-3. **发回**：把该文件提 PR / 丢共享目录 / 贴维护者表单。
+### 回流同意机制（默认开启）
+- evolve 识别到**新坑**后，写入 `evolution/last-evolution.json`（含新坑的 id / 症状 / 解法），并把该坑标记为 `consent: pending`。
+- agent 出完报告，读取 `last-evolution.json`；若有 `pending` 新坑，**用提问询问用户「是否允许把这个新坑回流给维护者？」**：
+  - 同意 → `node contribute.cjs --make --grant <id>`（打包进 bundle，标 `consent=granted`）；
+  - 拒绝 → `node contribute.cjs --make --decline <id>`（仅留本地，永不打包）。
+- **打包出的 bundle 不会自动发送**：需用户手动提 PR / 丢共享目录 / 贴表单给维护者。
+- 改默认行为：编辑 `evolution/contrib.json` 的 `mode`：`ask`（默认，每遇新坑询问）/ `always`（自动授权并打包新坑，仍手动发送）/ `never`（永不回流）。
+
+### 回流流程
+1. **出坑**：verify 后 evolve 自动把未命中新失败写成 `auto_*` 新坑（`consent: pending`）。
+2. **授权+打包**：经用户同意后 `node contribute.cjs --make --grant <id>` → 生成 `evolution/contrib/contribution-<ts>.json`（仅含已授权且未共享的坑）。
+3. **发回**：用户把该文件提 PR / 丢共享目录 / 贴维护者表单（脚本不代发）。
 4. **合并**：维护者 `node contribute.cjs --merge <bundle>` → 合并进发布版 `pitfalls.json` 并自动重算 Playbook → 重新分发（上架市场 / 发新版 zip）。
-5. **查状态**：`node contribute.cjs --status` 看「已共享/待提交」计数。
+5. **查状态**：`node contribute.cjs --status` 看「已共享 / 已授权待提交 / 未授权」计数。
 
-> 已共享的坑（含 5 条种子）不会再被打包；合并时按 `id` 去重，命中次数取 max、出现软件取并集。
+> 已共享的坑（含 5 条种子）不会再被打包；合并时按 `id` 去重，命中次数取 max、出现软件取并集。未授权/已拒绝的坑只留本地，绝不会进 bundle。
 
 ## 📦 如何分享给更多人（分发）
 
