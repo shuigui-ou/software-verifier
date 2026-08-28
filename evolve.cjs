@@ -37,10 +37,16 @@ function savePitfalls(arr) {
 }
 function matchPitfall(text, pitfalls) {
   if (!text) return null;
+  // 安全：用字面量子串匹配，绝不对 patterns 执行 new RegExp —— 避免恶意 bundle 注入
+  // 灾难性正则(ReDoS)导致每次验证卡死。patterns 在 sanitizePit 中已被强制转义为安全字面量。
+  text = String(text);
   let best = null;
   for (const p of pitfalls) {
     for (const pat of (p.patterns || [])) {
-      try { if (new RegExp(pat, 'i').test(text)) { if (!best || (p.hits || 0) > (best.hits || 0)) best = p; break; } } catch (e) {}
+      if (typeof pat === 'string' && pat && text.includes(pat)) {
+        if (!best || (p.hits || 0) > (best.hits || 0)) best = p;
+        break;
+      }
     }
   }
   return best;
