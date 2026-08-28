@@ -3,7 +3,7 @@ name: software-verifier
 displayName: 软件功能全量验证器
 description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。
 author: user_12807b25
-version: 1.0.1
+version: 1.0.2
 category: 开发工具
 tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化]
 trigger:
