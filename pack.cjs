@@ -12,8 +12,11 @@ const OUT = path.resolve(ROOT, '..', 'software-verifier.zip');
 const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots']);
 const SKIP_FILE = (p) => {
   if (p.endsWith('.log')) return true;
+  if (p.endsWith('.gitignore')) return true;
   if (p.endsWith('evolution/learnings.jsonl')) return true;
   if (p.endsWith('evolution/evolution.md')) return true;
+  // SkillHub 上传包禁止二进制文件，图标需单独在表单「图标」处上传
+  if (/\.(png|jpe?g|gif|ico|webp|bmp)$/i.test(p)) return true;
   return false;
 };
 

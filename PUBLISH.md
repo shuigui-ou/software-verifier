@@ -40,10 +40,12 @@ python -m zipapp   # 不适用，改用下方脚本
 或直接用仓库内脚本（在 skill 根目录执行）：
 
 ```bash
-node pack.cjs   # 生成 ../software-verifier.zip（已排除运行时日志/产物）
+node pack.cjs   # 生成 ../software-verifier.zip（已排除运行时日志/产物/.gitignore）
 ```
 
-人工打包也可：选中 `software-verifier/` 整个目录压缩，排除 `node_modules/`、`verify_report/`、`*.log`、`evolution/learnings.jsonl`、`evolution/evolution.md`。
+人工打包也可：选中 `software-verifier/` 整个目录压缩，排除 `node_modules/`、`verify_report/`、`*.log`、`evolution/learnings.jsonl`、`evolution/evolution.md`、**`.gitignore`**（SkillHub 上传包不允许含点文件，否则报「不允许的文件类型」）、**所有图片/二进制**（`*.png/*.jpg/*.ico` 等，SkillHub 上传包禁止二进制，否则报「部分文件被跳过 / 不支持的文件类型」）。
+
+> ⚠️ **图标单独传**：`icon.png` 等二进制不要放进 zip，而是在提交表单的「图标 → 自定义」处单独上传。本仓库 `pack.cjs` 已自动排除图片。
 
 ## 上架前自检清单
 

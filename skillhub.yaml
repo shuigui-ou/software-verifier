@@ -33,7 +33,7 @@ skill:
     - evolve.cjs
     - contribute.cjs
     - drivers/dom.js
-    - drivers/electron.js
+    - drivers/dom.js
     - drivers/miniprogram.js
     - drivers/appium.js
     - evolution/pitfalls.json
