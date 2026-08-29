@@ -21,3 +21,6 @@ RELEASE_NOTES_tmp.md
 evolution/last-evolution.json
 evolution/contrib-ledger.json
 evolution/contrib/
+
+# 视觉基线（本机本地指纹，不入库）
+evolution/visual-baselines/

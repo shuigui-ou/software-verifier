@@ -3,7 +3,7 @@
 skill:
   name: software-verifier
   displayName: 软件功能全量验证器
-version: 1.0.2
+version: 1.1.0
   author: user_12807b25
   category: 开发工具
   tags:
@@ -13,7 +13,10 @@ version: 1.0.2
     - 自动化
     - 无头浏览器
     - 自进化
-  description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→用本机无头 Edge/Electron/小程序/Appium 真实点击填表→截图抓错断言→产出 ✅/❌ 报告。只验证不修复，带自进化知识库与贡献回流，越用越强。
+    - 自愈
+    - 视觉回归
+    - MCP
+  description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→用本机无头 Edge/Electron/小程序/Appium 真实点击填表→截图抓错断言→产出 ✅/❌ 报告。只验证不修复，带自进化知识库与贡献回流；v1.1 新增【自愈 Healer】（选择器失效自动找回等价元素）、【零依赖视觉回归】（DOM 布局指纹区分真缺陷与设计变更）、【MCP server】（别的 agent 也能直接调用验证能力）。
   platforms:
     - workbuddy
   permission: 本机自动化（启无头浏览器/截图/写报告，不修改被测软件）
@@ -30,9 +33,13 @@ version: 1.0.2
   files:
     - SKILL.md
     - verify.cjs
+    - engine.cjs
     - evolve.cjs
     - contribute.cjs
+    - mcp-server.cjs
     - drivers/dom.js
+    - drivers/heal.cjs
+    - drivers/visual.cjs
     - drivers/miniprogram.js
     - drivers/appium.js
     - evolution/pitfalls.json

@@ -115,7 +115,9 @@ function runEvolution(resultPath) {
       fail: r.summary && r.summary.fail,
       failureIds: fails.map(f => f.id),
       matched: matched.map(m => m.pitfall),
-      newPitfalls: newOnes.map(n => n.id)
+      newPitfalls: newOnes.map(n => n.id),
+      healTotal: r.healTotal || 0,
+      heals: (r.heals || []).map(h => ({ sel: h.sel, strategy: h.strategy, ok: h.ok }))
     };
     fs.mkdirSync(EV_DIR, { recursive: true });
     fs.appendFileSync(LEARNINGS, JSON.stringify(rec) + '\n');
@@ -125,12 +127,15 @@ function runEvolution(resultPath) {
       ts: new Date().toISOString(),
       app: r.name,
       newPits: newOnes.map(n => ({ id: n.id, category: n.category, symptom: n.symptom, fix: n.fix, consent: n.consent })),
-      matched: matched.map(m => m.pitfall)
+      matched: matched.map(m => m.pitfall),
+      healTotal: r.healTotal || 0
     };
     fs.writeFileSync(path.join(EV_DIR, 'last-evolution.json'), JSON.stringify(lastRun, null, 2));
 
     writeEvolutionMd(pitfalls);
-    console.log('[evolve] 本次失败 ' + fails.length + ' 项，命中已知坑 ' + matched.length + '，新增未知坑 ' + newOnes.length + '；playbook 现共 ' + pitfalls.length + ' 条。');
+    let msg = '[evolve] 本次失败 ' + fails.length + ' 项，命中已知坑 ' + matched.length + '，新增未知坑 ' + newOnes.length + '；playbook 现共 ' + pitfalls.length + ' 条。';
+    if (r.healTotal) msg += '  自愈 ' + r.healTotal + ' 处选择器。';
+    console.log(msg);
     return { matched, newOnes };
   } catch (e) {
     console.log('[evolve] 跳过: ' + (e && e.message || e));

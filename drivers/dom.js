@@ -7,11 +7,18 @@
  *   - electron: electron.launch({ args:[appPath] })（Playwright 原生支持 Electron）
  *
  * 仅 launch 方式不同，其余点击/填表/断言逻辑完全一致。
+ * 自愈：clickSel/fillSel/waitSel 失败时自动用 drivers/heal.cjs 找回等价元素。
  */
+const path = require('path');
+const { healClickSel, healFillSel, healWaitSel } = require(path.join(__dirname, '..', 'drivers', 'heal.cjs'));
+const visual = require(path.join(__dirname, '..', 'drivers', 'visual.cjs'));
+
 function makeDomDriver(kind, PW_CORE) {
   let browser, page;
   const errors = [];
   const featureErrors = [];
+  const heals = [];
+  let HEAL_ENABLED = true;
 
   async function launch(opts) {
     if (kind === 'browser') {
@@ -81,9 +88,14 @@ function makeDomDriver(kind, PW_CORE) {
 
   async function clickSel(sel, nth = 0) {
     const els = await page.$$(sel);
-    if (!els[nth]) return { ok: false, count: els.length };
-    await els[nth].click();
-    return { ok: true, count: els.length };
+    if (els[nth]) { await els[nth].click(); return { ok: true, count: els.length }; }
+    // 自愈：原选择器失效时，用稳定信号找回等价元素
+    if (HEAL_ENABLED) {
+      const h = await healClickSel(page, sel, nth);
+      if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+    }
+    heals.push({ sel, ok: false, action: 'click' });
+    return { ok: false, count: els.length };
   }
 
   async function fillNear(label, value) {
@@ -108,7 +120,14 @@ function makeDomDriver(kind, PW_CORE) {
 
   async function fillSel(sel, value) {
     try { await page.fill(sel, value, { timeout: 5000 }); return { ok: true }; }
-    catch (e) { return { ok: false, err: e.message }; }
+    catch (e) {
+      if (HEAL_ENABLED) {
+        const h = await healFillSel(page, sel, value);
+        if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
+      }
+      heals.push({ sel, ok: false, action: 'fill' });
+      return { ok: false, err: e.message };
+    }
   }
 
   // 文件上传：把本地文件设到 <input type=file>（导出模板 / 从工单提取 / 导入工单 JSON 等）
@@ -139,7 +158,14 @@ function makeDomDriver(kind, PW_CORE) {
   async function wait(ms) { await new Promise(r => setTimeout(r, ms)); return { ok: true }; }
   async function waitSel(sel, timeout) {
     try { await page.waitForSelector(sel, { timeout: timeout || 10000 }); return { ok: true }; }
-    catch (e) { return { ok: false, err: 'waitSel 超时: ' + sel }; }
+    catch (e) {
+      if (HEAL_ENABLED) {
+        const h = await healWaitSel(page, sel, timeout || 10000);
+        if (h.ok) { heals.push({ sel, strategy: 'wait-heal', ok: true, action: 'wait' }); return { ok: true, healed: true }; }
+      }
+      heals.push({ sel, ok: false, action: 'wait' });
+      return { ok: false, err: 'waitSel 超时(含自愈): ' + sel };
+    }
   }
   async function waitText(text, timeout) {
     try { await page.waitForFunction(t => document.body.innerText.includes(t), text, { timeout: timeout || 10000 }); return { ok: true }; }
@@ -164,17 +190,25 @@ function makeDomDriver(kind, PW_CORE) {
     }, { busySel, doneEval: doneEval || '' });
   }
 
+  // 视觉签名：委托 drivers/visual.cjs（零依赖布局指纹回归）
+  async function visualCapture(opts) { return await visual.captureSignature(page, opts || {}); }
+  function visualDiff(base, cur, opts) { return visual.diffSignature(base, cur, opts || {}); }
+
   async function close() { if (browser) await browser.close(); }
   function clearFeatureErrors() { featureErrors.length = 0; }
+  function clearHeals() { heals.length = 0; }
+  function setHeal(v) { HEAL_ENABLED = !!v; }
 
   return {
     type: kind,
     launch, preFeatureCleanup,
     clickText, clickSel, fillNear, fillSel, fileSel, countSel, bodyText, assertEval,
     goto, wait, waitSel, waitText, exec, screenshot, getBusyDone, close,
+    visualCapture, visualDiff,
     get errors() { return errors; },
     get featureErrors() { return featureErrors; },
-    clearFeatureErrors,
+    get heals() { return heals; },
+    clearFeatureErrors, clearHeals, setHeal,
   };
 }
 

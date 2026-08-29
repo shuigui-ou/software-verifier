@@ -31,7 +31,7 @@ const args = process.argv.slice(2);
 const opt = {
   spec: null, url: null, out: null, uiOnly: false, also: [], only: [], ai: 'off',
   driver: 'browser', app: null, platform: 'android', caps: null,
-  appiumUrl: 'localhost', appiumPort: 4723, port: 9420,
+  appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -49,6 +49,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--appium-url') opt.appiumUrl = args[++i];
   else if (a === '--appium-port') opt.appiumPort = parseInt(args[++i], 10);
   else if (a === '--port') opt.port = parseInt(args[++i], 10);
+  else if (a === '--no-heal') opt.heal = false;
 }
 if (!opt.spec || !opt.url) {
   console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--driver browser|electron|miniprogram|appium] [--out <dir>]');
@@ -87,80 +88,15 @@ function loadDriver(name) {
   throw new Error('未知驱动: ' + name + '（支持 browser|electron|miniprogram|appium）');
 }
 
-// ---------- 步骤执行（驱动无关） ----------
-async function runStep(drv, step) {
-  switch (step.do) {
-    case 'goto':
-      await drv.goto(BASE + (step.path || '/'));
-      return { ok: true };
-    case 'wait':
-      await sleep(step.ms || 1000); return { ok: true };
-    case 'waitSel':
-      return await drv.waitSel(step.sel, step.timeout);
-    case 'waitText':
-      return await drv.waitText(step.text, step.timeout);
-    case 'clickText':
-      return await drv.clickText(step.text, step.nth || 0);
-    case 'clickSel':
-      return await drv.clickSel(step.sel, step.nth || 0);
-    case 'fillSel':
-      return await drv.fillSel(step.sel, step.value || '');
-    case 'fileSel':
-      return await drv.fileSel(step.sel, step.path);
-    case 'fillNear':
-      return await drv.fillNear(step.label, step.value || '');
-    case 'exec':
-      return await drv.exec(step.js);
-    case 'screenshot':
-      return await drv.screenshot(SHOTS + '/' + step.name);
-    case 'assert': {
-      const ar = await runAssert(drv, step);
-      return { ok: ar.pass, detail: ar.detail };
-    }
-    case 'ai': {
-      const click = step.clickText ? await drv.clickText(step.clickText, step.nth || 0)
-        : step.clickSel ? await drv.clickSel(step.clickSel, step.nth || 0)
-        : { ok: false, err: 'ai 步骤缺 clickText/clickSel' };
-      if (!click.ok) return { ok: false, err: 'ai 点击失败: ' + (click.err || ''), clicked: false };
-      const timeout = step.timeout || 150000;
-      const busySel = step.busySel || '';
-      const start = Date.now();
-      let appeared = false;
-      while (Date.now() - start < timeout) {
-        const st = await drv.getBusyDone(busySel, step.doneEval);
-        if (st.busy) appeared = true;
-        if (st.done) return { ok: true, reason: 'done', appeared };
-        if (appeared && !st.busy) return { ok: true, reason: 'idle-cleared', appeared };
-        if (!appeared && !step.doneEval && Date.now() - start > 8000) return { ok: false, reason: 'no-busy-detected', appeared };
-        await sleep(1500);
-      }
-      return { ok: false, reason: 'timeout', appeared };
-    }
-    default:
-      return { ok: false, err: '未知步骤类型: ' + step.do };
-  }
-}
-
-async function runAssert(drv, a) {
-  if (a.sel) {
-    const n = await drv.countSel(a.sel);
-    const min = a.min != null ? a.min : 1;
-    return { pass: n >= min, detail: `选择器 ${a.sel} 命中 ${n} 个（要求≥${min}）` };
-  }
-  if (a.notSel) {
-    const n = await drv.countSel(a.notSel);
-    return { pass: n === 0, detail: `选择器 ${a.notSel} 命中 ${n} 个（要求=0）` };
-  }
-  if (a.includes) {
-    const txt = await drv.bodyText();
-    const pass = txt.includes(a.includes);
-    return { pass, detail: `页面文本包含「${a.includes}」= ${pass}` };
-  }
-  if (a.eval) {
-    return await drv.assertEval(a.eval);
-  }
-  return { pass: true, detail: '无断言' };
-}
+// ---------- 步骤执行（驱动无关，委托 engine.cjs） ----------
+const { runStep: _runStep, runAssert: _runAssert } = require(SKILL_DIR + '/engine.cjs');
+const visKey = (name) => {
+  const app = (spec.app || spec.name || 'app');
+  return path.join(SKILL_DIR, 'evolution', 'visual-baselines', (app + '_' + name).replace(/[^\w一-龥]/g, '_').slice(0, 80) + '.json');
+};
+const CTX = { BASE, SHOTS, SKILL_DIR, visualBase: visKey };
+async function runStep(drv, step) { return _runStep(drv, step, CTX); }
+async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
 
 // ---------- 主流程 ----------
 (async () => {
@@ -169,6 +105,7 @@ async function runAssert(drv, a) {
   const errors = []; // 全局错误（最终汇总）
   try {
     drv = loadDriver(opt.driver);
+    drv.setHeal(opt.heal);
     await drv.launch({ appPath: opt.app, platform: opt.platform, caps: opt.caps, appiumUrl: opt.appiumUrl, appiumPort: opt.appiumPort, port: opt.port });
     log('=== software-verifier [' + opt.driver + ']: ' + spec.name + ' @ ' + BASE + ' ===');
 
@@ -189,8 +126,10 @@ async function runAssert(drv, a) {
 
     log('将验证 ' + selected.length + ' / ' + spec.features.length + ' 个功能点\n');
 
+    const allHeals = [];
     for (const f of selected) {
       drv.clearFeatureErrors();
+      drv.clearHeals();
       await drv.preFeatureCleanup();
       const frec = { id: f.id, name: f.name, type: f.type, group: f.group || '', steps: [], asserts: [], pass: true, errors: [] };
       const featureErrors = []; // 本 feature 错误（来自驱动）
@@ -224,15 +163,20 @@ async function runAssert(drv, a) {
         await drv.screenshot(SHOTS + '/' + shotE).catch(() => {});
         frec.screenshot = 'shots/' + shotE;
       }
-      log('   → ' + (frec.pass ? 'PASS' : 'FAIL') + (frec.errors.length ? '  (' + frec.errors.length + ' 处)' : '') + '\n');
+      frec.heals = drv.heals.slice();
+      allHeals.push(...frec.heals);
+      log('   → ' + (frec.pass ? 'PASS' : 'FAIL') + (frec.errors.length ? '  (' + frec.errors.length + ' 处)' : '') + (frec.heals.length ? '  ♻自愈' + frec.heals.length : '') + '\n');
       result.features.push(frec);
     }
 
     result.endedAt = new Date().toISOString();
     result.totalErrors = errors;
+    result.healTotal = allHeals.length;
+    result.heals = allHeals;
     const passN = result.features.filter(f => f.pass).length;
     result.summary = { total: result.features.length, pass: passN, fail: result.features.length - passN };
     log('\n========== 汇总: ' + passN + '/' + result.features.length + ' 通过 ==========');
+    if (result.healTotal) log('♻ 本次自愈 ' + result.healTotal + ' 处失效选择器（见报告「自愈记录」）');
 
     fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
     writeMarkdown(result, OUT + '/VERIFY-报告.md');
@@ -270,6 +214,10 @@ function writeMarkdown(r, file) {
     md += `## 页面级错误日志\n\n`;
     for (const e of r.totalErrors.slice(0, 50)) md += `- ${e}\n`;
   }
+  if (r.heals && r.heals.length) {
+    md += `\n## 自愈记录（选择器失效后自动找回等价元素 · 仅修复测试定位，不改软件）\n\n`;
+    for (const h of r.heals) md += `- \`${h.sel}\` → 策略 \`${h.strategy || '?'}\` ${h.ok ? '✅ 已恢复' : '❌ 未找到等价元素'}${h.text ? '（' + h.text + '）' : ''}\n`;
+  }
   fs.writeFileSync(file, md);
 }
 
@@ -298,12 +246,15 @@ tr.pass td:first-child{color:#1a7f37}
 tr.fail{background:#fff5f5}
 tr.fail td:first-child{color:#c0392b}
 .err{color:#c0392b;font-size:12px;margin-top:4px}
+.heal{background:#fff;border:1px solid #e3e6ea;border-radius:10px;padding:12px 16px;margin-top:16px;font-size:13px}
+.heal code{background:#f0f2f5;padding:1px 5px;border-radius:4px;font-size:12px}
 a{color:#2f6fed}
 </style></head><body>
 <h1>功能验证报告：${esc(r.name)}</h1>
 <div class="meta">目标 ${esc(r.baseUrl)} · 驱动 ${esc(r.driver)} · ${esc(r.startedAt)}</div>
 <div class="summary"><b>${r.summary.pass}/${r.summary.total}</b> 通过 · 失败 ${r.summary.fail}</div>
 <table><thead><tr><th>状态</th><th>ID</th><th>功能</th><th>类型</th><th>关键断言</th><th>截图/错误</th></tr></thead><tbody>${rows}</tbody></table>
+${r.heals && r.heals.length ? `<div class="heal"><b>♻ 自愈 ${r.heals.length} 处</b>：选择器失效后自动用稳定信号找回等价元素（仅修正测试定位，不改被测软件）。<ul>${r.heals.map(h => `<li><code>${esc(h.sel)}</code> → <code>${esc(h.strategy || '?')}</code> ${h.ok ? '✅' : '❌'}${h.text ? '（' + esc(h.text) + '）' : ''}</li>`).join('')}</ul></div>` : ''}
 </body></html>`;
   fs.writeFileSync(file, html);
 }

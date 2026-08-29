@@ -3,7 +3,7 @@ name: software-verifier
 displayName: 软件功能全量验证器
 description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。
 author: user_12807b25
-version: 1.0.2
+version: 1.1.0
 category: 开发工具
 tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化]
 trigger:
@@ -83,6 +83,32 @@ icon: icon.png
 - **Git 开源仓库**：初始化仓库 + README + 一行安装命令，便于版本演进与他人提 PR（与贡献回流天然契合）。
 
 > 无论哪条路，配合上面的「贡献回流」才能越用越强——否则知识库只在单机累积。
+
+## ♻ 自愈（Healer · 默认开）
+
+`clickSel` / `fillSel` / `waitSel` 命中失败时，**不会立刻 FAIL**，而是用稳定信号（`data-testid` → `aria-label` → `role`+文本 → `class` → 文本）在 DOM 里找回等价元素，自动恢复点击/填值/等待。
+
+- 默认开启；想关掉加 `--no-heal`（选择器写错就直接失败，便于暴露 spec 问题）。
+- 自愈**只修正测试定位，绝不改被测软件**（符合铁律），断言仍然严格——它是把"选择器写错"这种测试设计问题修对，不是替软件修 bug。
+- 报告「自愈记录」逐条列出：原选择器 → 命中策略 → 是否恢复，便于把稳定写法沉淀回 spec（如改用 `data-testid`）。
+- 可单独用 MCP 工具 `heal_selector` 诊断某个失效选择器。
+
+## 👁 视觉验证（零依赖视觉回归）
+
+不引入任何图片库，用「DOM 布局指纹」做视觉回归，足以区分**真缺陷**（元素消失/被遮挡/报错遮罩/内容区塌缩）与**设计变更**（位置微调/重排，不误报）：
+
+- 步骤 `visual`：`{ "do":"visual", "name":"首页", "sel":"可选关注的选择器", "baseline":true }` —— 首次建基线，之后每次比对返回 `changed / moved / disappeared / appeared / severity`。
+- 断言 `visual`：`{ "visual":"首页", "severity":3 }` —— 严重度 ≤ 阈值判过；消失元素贡献 3 分，故默认「1 个关键元素消失」即 FAIL（真缺陷），纯位置微调不误报。
+- 基线存 `evolution/visual-baselines/`（本机本地、不入库）。
+- 可单独用 MCP 工具 `visual_capture` / `visual_diff`。
+
+## 🔌 MCP server（让别的 agent 也能调验证能力）
+
+把本 skill 包成 MCP server，**别的 agent / 别的 skill** 可直接调用验证工具，不必加载整份 skill 指令：
+
+- 暴露工具：`verify_run` / `browser_run` / `heal_selector` / `visual_capture` / `visual_diff`（完整 schema 见 `mcp-server.cjs` 头部）。
+- 注册：在 `~/.workbuddy/mcp.json` 的 `mcpServers` 加 `software-verifier`，`command` 指向本机 node，`args` 指向本 skill 的 `mcp-server.cjs`，`env` 设 `PW_CORE`。
+- 零依赖：原生 Node stdio JSON-RPC 实现，无需 `@modelcontextprotocol/sdk`。日志走 stderr，不污染协议流。
 
 ## 何时用
 
