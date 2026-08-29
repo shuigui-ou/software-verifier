@@ -3,15 +3,16 @@ name: software-verifier
 displayName: 软件功能全量验证器
 description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。
 author: user_12807b25
-version: 1.1.0
+version: 1.2.0
 category: 开发工具
-tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化]
+tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化, MCP验收]
 trigger:
   - 按说明书验证软件
   - 把软件功能全量验证一遍
   - 功能走查
   - 回归测试
   - 上线前冒烟测试
+  - 验收/检查其他 MCP server 的行为
 platforms: [workbuddy]
 permission: 本机自动化（启无头浏览器/截图/写报告，不修改被测软件）
 dependency: node >= 18 + playwright-core（browser 驱动默认）；electron 驱动需完整 playwright；小程序需 miniprogram-automator；原生需 webdriverio+Appium
@@ -109,6 +110,27 @@ icon: icon.png
 - 暴露工具：`verify_run` / `browser_run` / `heal_selector` / `visual_capture` / `visual_diff`（完整 schema 见 `mcp-server.cjs` 头部）。
 - 注册：在 `~/.workbuddy/mcp.json` 的 `mcpServers` 加 `software-verifier`，`command` 指向本机 node，`args` 指向本 skill 的 `mcp-server.cjs`，`env` 设 `PW_CORE`。
 - 零依赖：原生 Node stdio JSON-RPC 实现，无需 `@modelcontextprotocol/sdk`。日志走 stderr，不污染协议流。
+
+## 🔍 验收其他 MCP（verify_mcp · 我们的 skill 检查其他 MCP）
+
+software-verifier 不只「被调用」，还能**作为 MCP client 去检查另一个 MCP server** 的行为是否符合契约——这正是「我们的 skill 检查其他 MCP」的能力落地：
+
+- 新增 `mcp-client.cjs`（零依赖 stdio JSON-RPC client）连接目标 server；`mcp-server.cjs` 暴露 `verify_mcp` 工具。
+- 流程：连接目标 → `tools/list` 核对工具清单 → 按 spec 调用工具并校验返回（`contains` 文本命中 / `noError` 无错误）→ 输出 ✅/❌ 报告（含 toolsMissing / calls 明细）。
+- 工具入参示例：
+  ```yaml
+  targetServer:
+    command: '<node>'
+    args: ['<mcp-server.cjs>']
+    env: { PW_CORE: '...' }
+  spec:
+    tools:
+      - name: tool_a
+        args: {}
+        expect: { contains: '成功', noError: true }
+  ```
+- 当前以**结构化契约验收**为主（清单核对 + 返回内容/错误校验）。视觉叠加（对工具返回的页面做视觉指纹比对）预留接口，待目标工具返回可截图页面时由浏览器驱动触发。
+- 差异化：外部 mcp-scan 等偏安全静态扫描，我们补齐了**行为级契约验收**这一块。
 
 ## 何时用
 

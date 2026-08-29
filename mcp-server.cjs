@@ -44,6 +44,7 @@ const { makeDomDriver } = require(path.join(SKILL_DIR, 'drivers', 'dom.js'));
 const { healClickSel, healFillSel } = require(path.join(SKILL_DIR, 'drivers', 'heal.cjs'));
 const { runStep, runAssert } = require(path.join(SKILL_DIR, 'engine.cjs'));
 const visual = require(path.join(SKILL_DIR, 'drivers', 'visual.cjs'));
+const { connect } = require(path.join(SKILL_DIR, 'mcp-client.cjs'));
 
 const TOOLS = [
   {
@@ -98,6 +99,18 @@ const TOOLS = [
       type: 'object',
       properties: { url: { type: 'string' }, name: { type: 'string' }, sel: { type: 'string' }, moveThreshold: { type: 'number' } },
       required: ['url', 'name']
+    }
+  },
+  {
+    name: 'verify_mcp', description: '连接另一个 MCP server，按 spec 做契约/行为级验收：核对工具清单、调用工具并校验返回（contains/noError），输出 ✅/❌ 报告。纯本机零依赖，是「我们的 skill 检查其他 MCP」的核心入口。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        targetServer: { type: 'object', description: '目标 MCP server 启动信息 {command, args, env}' },
+        spec: { type: 'object', description: '验收规格 {tools:[{name, args?, expect?:{exists?,contains?,noError?}}], visual?}' },
+        timeout: { type: 'number', description: '单次调用超时 ms（默认 30000）' }
+      },
+      required: ['targetServer', 'spec']
     }
   }
 ];
@@ -181,6 +194,36 @@ async function handleTool(params, id) {
       });
       return ok(id, r);
     }
+    if (name === 'verify_mcp') {
+      const ts = args.targetServer || {};
+      if (!ts.command) return ok(id, { ok: false, error: 'missing-targetServer.command' });
+      const c = connect({ command: ts.command, args: ts.args || [], env: ts.env || {} }, { timeout: args.timeout || 30000 });
+      try {
+        await c.initialize();
+        const tools = await c.listTools();
+        const toolNames = tools.map(t => t.name);
+        const spec = args.spec || {};
+        const wantTools = spec.tools || [];
+        const missing = wantTools.filter(w => !toolNames.includes(typeof w === 'string' ? w : w.name));
+        const calls = [];
+        for (const w of wantTools) {
+          const tname = typeof w === 'string' ? w : w.name;
+          const expect = typeof w === 'string' ? {} : (w.expect || {});
+          if (expect.exists === true) { calls.push({ name: tname, checked: 'exists', ok: toolNames.includes(tname) }); continue; }
+          try {
+            const r = await c.callTool(tname, (typeof w === 'string' ? {} : (w.args || {})));
+            const txt = JSON.stringify(r.content || r);
+            let okCall = true, detail = 'called';
+            if (expect.contains) { okCall = txt.includes(expect.contains); detail = 'contains "' + expect.contains + '"=' + okCall; }
+            if (expect.noError) { const hasErr = r.isError === true || txt.includes('"isError":true'); okCall = okCall && !hasErr; detail = 'noError=' + (!hasErr); }
+            calls.push({ name: tname, ok: okCall, detail });
+          } catch (e) { calls.push({ name: tname, ok: false, detail: 'call-failed: ' + e.message }); }
+        }
+        const visual = spec.visual ? { skipped: true, reason: '视觉叠加需目标工具返回可截图页面；verify_mcp 当前以结构化契约验收为主，视觉层由 software-verifier 浏览器驱动按需触发' } : null;
+        const pass = missing.length === 0 && calls.every(x => x.ok !== false);
+        return ok(id, { ok: true, target: ts.command + ' ' + (ts.args || []).join(' '), toolsFound: toolNames.length, toolsMissing: missing, calls, visual, pass, summary: { total: wantTools.length, missing: missing.length, failCalls: calls.filter(x => x.ok === false).length } });
+      } finally { c.close(); }
+    }
     return err(id, -32602, '未知工具: ' + name);
   } catch (e) {
     return err(id, -32603, (e && e.message) || String(e));
@@ -211,7 +254,7 @@ rl.on('line', async (line) => {
   try { req = JSON.parse(t); } catch (e) { return; }
   const id = req.id;
   if (req.method === 'initialize') {
-    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.1.0' } } });
+    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.2.0' } } });
   }
   if (req.method === 'notifications/initialized') return; // 通知，无回复
   if (req.method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
