@@ -67,9 +67,9 @@ const log = (...a) => console.log(...a);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ---------- 自进化知识库 ----------
-const { runEvolution, loadPitfalls, matchPitfall } = require(SKILL_DIR + '/evolve.cjs');
+const { runEvolution, loadPitfalls, matchPitfall, anonymize } = require(SKILL_DIR + '/evolve.cjs');
 const PITFALLS = loadPitfalls();
-const hintFor = (text) => { const p = matchPitfall(text || '', PITFALLS); return p ? ' 💡 已知坑[' + p.id + ']: ' + p.fix : ''; };
+const hintFor = (text) => { const p = matchPitfall(anonymize(text || ''), PITFALLS); return p ? ' 💡 已知坑[' + p.id + ']: ' + p.fix : ''; };
 
 // ---------- 驱动加载 ----------
 function loadDriver(name) {

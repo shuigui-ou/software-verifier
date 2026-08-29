@@ -254,7 +254,7 @@ rl.on('line', async (line) => {
   try { req = JSON.parse(t); } catch (e) { return; }
   const id = req.id;
   if (req.method === 'initialize') {
-    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.2.2' } } });
+    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.2.3' } } });
   }
   if (req.method === 'notifications/initialized') return; // 通知，无回复
   if (req.method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });

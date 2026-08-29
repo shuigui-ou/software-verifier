@@ -37,13 +37,13 @@ function savePitfalls(arr) {
 }
 function matchPitfall(text, pitfalls) {
   if (!text) return null;
-  // 安全：用字面量子串匹配，绝不对 patterns 执行 new RegExp —— 避免恶意 bundle 注入
-  // 灾难性正则(ReDoS)导致每次验证卡死。patterns 在 sanitizePit 中已被强制转义为安全字面量。
-  text = String(text);
+  // 安全：用字面量子串匹配（大小写不敏感），绝不对 patterns 执行 new RegExp —— 避免恶意 bundle 注入 / ReDoS。
+  // 大小写不敏感：同类报错只要核心词相同（如 Not Clickable / not clickable）即可命中，不再因大小写漏配。
+  text = String(text).toLowerCase();
   let best = null;
   for (const p of pitfalls) {
     for (const pat of (p.patterns || [])) {
-      if (typeof pat === 'string' && pat && text.includes(pat)) {
+      if (typeof pat === 'string' && pat && text.includes(pat.toLowerCase())) {
         if (!best || (p.hits || 0) > (best.hits || 0)) best = p;
         break;
       }
@@ -60,6 +60,26 @@ function guessCategory(err) {
   return '未知';
 }
 function esc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// 同义归一表：把同类报错的不同措辞映射到同一组关键词，扩大自动坑的泛化面。
+// 例：框架 A 报 "element is not clickable"、框架 B 报 "intercepts pointer events"，都含下表关键词 → 命中同一坑。
+const SYN_KEYS = [
+  'clickable', 'intercepts', 'intercept',        // 点击被拦截
+  'timeout', 'timed out', 'waiting for', 'stable', // 行动性/等待超时
+  'visible', 'hidden', 'invisible',              // 显隐/容器
+  'selector', 'nth', 'strict', 'resolved to',     // 选择器精度
+  'assert', 'expected', 'eval',                   // 断言语义
+  'iframe', 'frame', 'shadow', 'detached',        // 结构/上下文
+  'animation', 'animate', 'flaky', 'flake'        // 不稳定
+];
+// 从脱敏错误里抽核心 pattern：优先取命中同义词表的词（泛化好，不依赖前缀），兜底取前 36 字符（保留历史行为）。
+// 全部 esc 防正则注入（includes 不执行正则，但保持与历史一致）。
+function extractPatterns(ae) {
+  const lower = String(ae || '').toLowerCase();
+  const pats = new Set();
+  for (const k of SYN_KEYS) if (lower.includes(k)) pats.add(k);
+  pats.add((ae || '').slice(0, 36)); // 兜底前缀
+  return [...pats].filter(Boolean).map(esc);
+}
 
 /**
  * anonymize —— 抽坑即脱敏（回流安全的根基）
@@ -103,7 +123,7 @@ function runEvolution(resultPath) {
               category: guessCategory(e),
               symptom: sig,
               consent: 'granted', // 已脱敏、无原始数据，默认可回传（仍可用 --decline 拒）
-              patterns: ae ? [esc(ae.slice(0, 36))] : [],
+              patterns: extractPatterns(ae),
               fix: '（待人工补充解法）— 首次出现，请在 evolution/pitfalls.json 补充可复用解法。',
               apps: ['<anon>'], // 脱敏：不含真实项目名
               hits: 1,
@@ -193,4 +213,4 @@ if (require.main === module) {
   runEvolution(rp);
 }
 
-module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize };
+module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize, extractPatterns, SYN_KEYS };
