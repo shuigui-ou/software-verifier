@@ -1,9 +1,9 @@
 ---
 name: software-verifier
 displayName: 软件功能全量验证器
-description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。
+description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。v1.2 新增 verify_mcp 验收其他 MCP；v1.2.2 坑回流抽坑即脱敏+一键回传、预置 21 条公共 UI 验证坑语料（冷启动即有货）。
 author: user_12807b25
-version: 1.2.1
+version: 1.2.2
 category: 开发工具
 tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化, MCP验收]
 trigger:
@@ -37,31 +37,29 @@ icon: icon.png
 每次 `verify.cjs` 跑完，会自动调用 `evolve.cjs`：
 
 - 扫描 `result.json` 的失败与错误，命中 `evolution/pitfalls.json` 里的**已知坑**就累加命中次数，并在报告错误后附 `💡 已知坑[id]: 解法`；
-- 没命中的新失败，自动生成一条新坑写入 playbook（去重）；新坑默认 `consent: pending`，并写入 `evolution/last-evolution.json` 供出报告后询问是否回流；
+- 没命中的新失败，自动生成一条新坑写入 playbook（去重）；**写入即脱敏**——`evolve.cjs` 已剥离 URL/路径/引号串/被测软件名，坑库只存失败模式、绝不含原始数据，故新坑默认 `consent: granted`；并写入 `evolution/last-evolution.json` 供出报告后一键回传。
 - 把本次运行追加进 `evolution/learnings.jsonl`，并重算 `evolution/evolution.md`（人类可读 Playbook，按命中排序）。
 
 知识库存于**用户级 skill 目录**，随本机所有项目累积。写新 spec 前先扫一眼 `evolution/evolution.md`，把规避写法直接写进 spec，可大幅减少误报。
 
-## 🤝 贡献回流（让所有人变强 · opt-in，绝不自动发送）
+## 🤝 贡献回流（让所有人变强 · 一键脱敏回传，绝不自动发送）
 
-`evolution/` 默认是本机本地——各装一份不会汇总。要真正"人越多越强"，把各自踩的坑**回流**到共享 playbook。回流**完全手动、需用户同意**，skill 不会联网回传任何数据。
+`evolution/` 默认是本机本地——各装一份不会汇总。要真正"人越多越强"，把各自踩的坑**回流**到共享 playbook。回流**完全手动发送、需用户同意**，skill 不会联网回传任何数据；但**抽坑即脱敏**，回传门槛降到最低。
 
-### 回流同意机制（默认开启）
-- evolve 识别到**新坑**后，写入 `evolution/last-evolution.json`（含新坑的 id / 症状 / 解法），并把该坑标记为 `consent: pending`。
-- agent 出完报告，读取 `last-evolution.json`；若有 `pending` 新坑，**用提问询问用户「是否允许把这个新坑回流给维护者？」**：
-  - 同意 → `node contribute.cjs --make --grant <id>`（打包进 bundle，标 `consent=granted`）；
-  - 拒绝 → `node contribute.cjs --make --decline <id>`（仅留本地，永不打包）。
-- **打包出的 bundle 不会自动发送**：需用户手动提 PR / 丢共享目录 / 贴表单给维护者。
-- 改默认行为：编辑 `evolution/contrib.json` 的 `mode`：`ask`（默认，每遇新坑询问）/ `always`（自动授权并打包新坑，仍手动发送）/ `never`（永不回流）。
+### 回流为什么用户愿意做（设计要点）
+- **零摩擦**：verify 后发现的新坑，`evolve.cjs` 已在写入时剥离 URL/路径/引号串/被测软件名——坑库只存「失败模式 + 解法」，不含任何原始数据。所以新坑默认 `consent: granted`，无需再逐条授权。
+- **一键**：出报告后 agent 可直接 `node contribute.cjs --share` 把待回传坑打包成脱敏 bundle；用户只需把文件发回（提 PR / 丢共享目录 / 贴表单），脚本不代发。
+- **可拒**：仍可用 `node contribute.cjs --make --decline <id>` 把某条坑仅留本地、永不打包。
+- **互惠可见**：合并后所有人的坑库都变强；下次 verify 命中别人回传的坑会直接附 `💡 已知坑[id]: 解法`。
 
 ### 回流流程
-1. **出坑**：verify 后 evolve 自动把未命中新失败写成 `auto_*` 新坑（`consent: pending`）。
-2. **授权+打包**：经用户同意后 `node contribute.cjs --make --grant <id>` → 生成 `evolution/contrib/contribution-<ts>.json`（仅含已授权且未共享的坑）。
+1. **出坑+脱敏**：verify 后 evolve 自动把未命中新失败写成 `auto_*` 新坑，**已脱敏、默认可回传**。
+2. **一键打包**：`node contribute.cjs --share` → 生成 `evolution/contrib/contribution-<ts>.json`（强制 `apps:['<anon>']`，再无真实项目名）；旧流程 `--make --grant/--decline` 仍可用。
 3. **发回**：用户把该文件提 PR / 丢共享目录 / 贴维护者表单（脚本不代发）。
 4. **合并**：维护者 `node contribute.cjs --merge <bundle>` → 合并进发布版 `pitfalls.json` 并自动重算 Playbook → 重新分发（上架市场 / 发新版 zip）。
-5. **查状态**：`node contribute.cjs --status` 看「已共享 / 已授权待提交 / 未授权」计数。
+5. **查状态**：`node contribute.cjs --status` 看「已共享 / 待回传 / 已拒绝」计数。
 
-> 已共享的坑（含 5 条种子）不会再被打包；合并时按 `id` 去重，命中次数取 max、出现软件取并集。未授权/已拒绝的坑只留本地，绝不会进 bundle。
+> 坑库已预置 26 条种子（5 条项目实测 + 21 条公开 UI 验证坑：overlay 拦截、shadow DOM、iframe、strict mode、动画不稳、token 过期等），冷启动即有货。合并时按 `id` 去重，命中次数取 max、出现软件取并集。被拒绝的坑只留本地，绝不会进 bundle。
 
 ### 🛡️ 回流安全过滤（merge 失败即中止）
 外部 bundle 是**不可信输入**，维护者执行 `--merge` 前 `contribute.cjs` 会先跑 `sanitizeBundle` 逐字段校验，**任一硬错误则整体拒绝、不写入任何数据**（fail-closed）。覆盖的攻击面：

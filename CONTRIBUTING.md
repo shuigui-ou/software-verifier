@@ -8,17 +8,17 @@ software-verifier 的核心价值来自**真实世界踩过的坑**。你的每�
 
 验证引擎 `verify.cjs` 跑完会自动调用 `evolve.cjs`：
 - 失败命中 `evolution/pitfalls.json` 已知坑 → 累加命中次数；
-- 未命中 → 自动生成 `auto_<特征>` 新坑，默认 `consent: pending`（**尚未授权回流**），并写入 `evolution/last-evolution.json`。
+- 未命中 → 自动生成 `auto_<特征>` 新坑，**写入即脱敏**（`evolve.cjs` 已剥离 URL / 路径 / 引号串 / 被测软件名，坑库只存失败模式、绝不含原始数据），默认 `consent: granted`（无敏感信息、可回传），并写入 `evolution/last-evolution.json`。
 
-**回流需你同意，且 skill 不会自动发送任何数据。** 默认（`evolution/contrib.json` 的 `mode: ask`）下，skill 识别到新坑会主动询问你是否回流：
+**回流需你同意，且 skill 不会自动发送任何数据。** 但由于抽坑即脱敏，回传门槛极低——出报告后一条命令即可完成：
 
 ```bash
-# 1. 查状态（已共享 / 已授权待提交 / 未授权）
+# 1. 查状态（已共享 / 待回传 / 已拒绝）
 node contribute.cjs --status
 
-# 2. 你同意回流的坑 → 授权并打包（仅打包 consent=granted 且未共享的坑）
-node contribute.cjs --make --grant <id1>,<id2>
-#   → 生成 evolution/contrib/contribution-<ts>.json
+# 2. 一键回传（推荐）：自动打包所有待回传坑 + 强制脱敏 apps，生成 bundle
+node contribute.cjs --share
+#   → 生成 evolution/contrib/contribution-<ts>.json（已脱敏，无 URL/路径/项目名）
 
 # 3. 你拒绝的坑 → 仅留本地，永不打包
 node contribute.cjs --make --decline <id>

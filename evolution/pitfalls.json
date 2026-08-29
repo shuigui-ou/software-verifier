@@ -3,9 +3,17 @@
     "id": "dom-hidden-container",
     "category": "显隐/容器",
     "symptom": "目标元素在隐藏容器内（如 #moreMenu 默认 hidden、折叠面板、未激活 tab），clickSel 报 element is not visible，或被遮罩拦截报 intercepts pointer events。",
-    "patterns": ["not visible", "is not visible", "intercepts pointer events", "modal intercepts", "hidden"],
+    "patterns": [
+      "not visible",
+      "is not visible",
+      "intercepts pointer events",
+      "modal intercepts",
+      "hidden"
+    ],
     "fix": "先 clickText 打开菜单/展开面板/切到对应 tab，再 clickSel 目标；若仍被遮罩拦截，用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
-    "apps": ["积木计划工作台 (block-workplan)"],
+    "apps": [
+      "积木计划工作台 (block-workplan)"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-28",
     "lastSeen": "2026-08-28",
@@ -15,9 +23,17 @@
     "id": "selector-nth-siblings",
     "category": "选择器精度",
     "symptom": "列表/树中同名按钮（每块一个 data-act）用 nth 点错对象，例如点了嵌套子块的「降级」而非新增块的「降级」。",
-    "patterns": ["nth", "降级", "升级", "data-act", "sibling"],
+    "patterns": [
+      "nth",
+      "降级",
+      "升级",
+      "data-act",
+      "sibling"
+    ],
     "fix": "setup 里用 exec 记录目标对象 id（如 state.plan[1].id），再 exec `document.querySelector('[data-id=\"ID\"] [data-act=\"x\"]').click()` 精确触发，避免 nth 歧义。",
-    "apps": ["积木计划工作台 (block-workplan)"],
+    "apps": [
+      "积木计划工作台 (block-workplan)"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-28",
     "lastSeen": "2026-08-28",
@@ -27,9 +43,17 @@
     "id": "assert-emptyOnlyFill",
     "category": "断言语义",
     "symptom": "被测功能仅对「空字段」生效（如变量联动 linkFill 只填空字段），断言「被全局值填充」却未清空原值，导致误报失败。",
-    "patterns": ["变量联动", "linkFill", "只填空", "空字段", "联动填充"],
+    "patterns": [
+      "变量联动",
+      "linkFill",
+      "只填空",
+      "空字段",
+      "联动填充"
+    ],
     "fix": "这是软件设计（仅填空字段）。验证此类功能时，先在 setup 用 exec 清空目标字段再触发，断言才成立；非 bug。",
-    "apps": ["积木计划工作台 (block-workplan)"],
+    "apps": [
+      "积木计划工作台 (block-workplan)"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-28",
     "lastSeen": "2026-08-28",
@@ -39,9 +63,16 @@
     "id": "engine-autonav",
     "category": "引擎/环境",
     "symptom": "browser 驱动启动后 page 停在 about:blank，所有功能 0/N 失败（clickText/waitSel 全找不到）。",
-    "patterns": ["about:blank", "0/18", "0 通过", "导航"],
+    "patterns": [
+      "about:blank",
+      "0/18",
+      "0 通过",
+      "导航"
+    ],
     "fix": "verify.cjs 已修复：启动即自动 goto(BASE+\"/\")。若仍 0/N，检查 --url 是否可达、被测静态服务器是否已起（如 python -m http.server）。",
-    "apps": ["通用"],
+    "apps": [
+      "通用"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-28",
     "lastSeen": "2026-08-28",
@@ -51,12 +82,455 @@
     "id": "action-timeout",
     "category": "行动性超时",
     "symptom": "clickText/clickSel 超时：element not found / not stable / not enabled。",
-    "patterns": ["Timeout", "waiting for element", "not stable", "not found", "exceeded"],
+    "patterns": [
+      "Timeout",
+      "waiting for element",
+      "not stable",
+      "not found",
+      "exceeded"
+    ],
     "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
-    "apps": ["通用"],
+    "apps": [
+      "通用"
+    ],
     "hits": 1,
     "firstSeen": "2026-08-28",
     "lastSeen": "2026-08-28",
     "shared": true
+  },
+  {
+    "id": "seed-overlay-intercept",
+    "category": "显隐/容器",
+    "symptom": "点击目标时报 element is not clickable at point，因弹窗/loading 遮罩/tooltip 挡在上方先接收了点击。",
+    "patterns": [
+      "is not clickable at point",
+      "would receive the click",
+      "intercepts pointer events",
+      "Other element would receive"
+    ],
+    "fix": "先关闭/等待遮罩消失（waitSel 遮罩消失或 exec 隐藏），再点击；顽固遮罩用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 120,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-hidden-in-container",
+    "category": "显隐/容器",
+    "symptom": "目标元素在隐藏容器内（display:none / visibility:hidden / 零尺寸），报 element is not visible 或不可点击。",
+    "patterns": [
+      "is not visible",
+      "not visible",
+      "has zero size",
+      "is hidden"
+    ],
+    "fix": "先展开容器/切到对应 tab/触发渲染（clickText 打开菜单），再操作目标；或 exec 直接操作 DOM。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 95,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-detached-from-dom",
+    "category": "选择器精度",
+    "symptom": "React/Vue 重渲染后句柄失效，报 Node is detached from the document / Element is not attached。",
+    "patterns": [
+      "detached from the DOM",
+      "detached from the document",
+      "is not attached",
+      "not attached to the DOM"
+    ],
+    "fix": "每次操作前重新定位（用 locator 而非缓存的 elementHandle）；或在重渲染后重新查询再点。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 88,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-strict-mode-multiple",
+    "category": "选择器精度",
+    "symptom": "选择器命中多个元素，报 Strict mode violation: locator resolved to N elements。",
+    "patterns": [
+      "resolved to",
+      "elements. Strict mode",
+      "strict mode violation",
+      "strict mode"
+    ],
+    "fix": "收窄选择器（加 data-testid / 文本 / 上下文），或用 .first() / .nth(i) / .last() 明确取第几个。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 76,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-zero-elements",
+    "category": "行动性超时",
+    "symptom": "选择器命中 0 个元素，报 locator resolved to 0 elements / unable to find。",
+    "patterns": [
+      "resolved to 0 elements",
+      "no elements",
+      "unable to find",
+      "Unable to find"
+    ],
+    "fix": "先 waitSel 等待出现（SPA 异步渲染）；核对选择器是否拼错/在 iframe 或 shadow DOM 内。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 70,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-networkidle-never",
+    "category": "引擎/环境",
+    "symptom": "等待 load state 'networkidle' 超时，因 SPA 持续轮询/长连接导致网络永不空闲。",
+    "patterns": [
+      "networkidle",
+      "load state",
+      "waiting for load"
+    ],
+    "fix": "对 SPA 改用 waitUntil:'domcontentloaded' 或 'load'，或显式 waitSel 关键元素而非等网络空闲。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 64,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-execution-context-destroyed",
+    "category": "引擎/环境",
+    "symptom": "页面导航/重渲染中执行中断，报 Execution context was destroyed, most likely because of a navigation。",
+    "patterns": [
+      "Execution context was destroyed",
+      "context was destroyed",
+      "because of a navigation"
+    ],
+    "fix": "等待导航稳定后再操作；易抖动步骤前加 waitSel 或 page.waitForLoadState('load')。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 58,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-target-closed",
+    "category": "引擎/环境",
+    "symptom": "浏览器/页面意外关闭，报 Target closed / Page closed。",
+    "patterns": [
+      "Target closed",
+      "Page closed",
+      "Target page"
+    ],
+    "fix": "确保浏览器进程存活；捕获崩溃重开；长任务避免触发登出/跳转导致页面关闭。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 41,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-shadow-dom",
+    "category": "选择器精度",
+    "symptom": "元素在 shadow root 内，默认选择器找不到（Web Components / 设计系统）。",
+    "patterns": [
+      "shadow",
+      "shadow root",
+      "pierce",
+      "open mode"
+    ],
+    "fix": "用穿透选择器或 Text/Role locator；Playwright 默认可跨 shadow 边界定位，确认未用隔离 closed-mode；必要时 elementHandle.evaluate 进 shadow。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 52,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-iframe-context",
+    "category": "选择器精度",
+    "symptom": "元素在 iframe 内，当前选择器在顶层文档解析，报找不到或点到错误上下文。",
+    "patterns": [
+      "frame",
+      "contentframe",
+      "switch to frame",
+      "iframe"
+    ],
+    "fix": "用 frameLocator('iframe').locator(...) 切到正确 frame 再操作。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 47,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-file-input",
+    "category": "断言语义",
+    "symptom": "type=file 的 input 无法 fill，报 Input of type 'file' cannot be filled。",
+    "patterns": [
+      "type \"file\"",
+      "cannot be filled",
+      "Input of type",
+      "file\" cannot"
+    ],
+    "fix": "用 setInputFiles(path) 上传；隐藏的 file input 先令其可见或用 inputElementHandle.setInputFiles。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 39,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-date-input",
+    "category": "断言语义",
+    "symptom": "原生日期输入 fill 不生效或弹原生选择器挡住后续。",
+    "patterns": [
+      "type \"date\"",
+      "date input",
+      "native date"
+    ],
+    "fix": "对 type=date 用 fill('YYYY-MM-DD')；避免触发原生 picker，必要时用 keyboard 输入。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 22,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-contenteditable",
+    "category": "断言语义",
+    "symptom": "contenteditable 区域 fill 无效（fill 只作用于 input/textarea）。",
+    "patterns": [
+      "contenteditable",
+      "content-editable"
+    ],
+    "fix": "先 click 聚焦，再用 page.keyboard.type / insertText 输入；或 exec 设 textContent。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 33,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-animation-not-stable",
+    "category": "行动性超时",
+    "symptom": "元素动画/过渡中位置变化，报 element is not stable - waiting for it to be stable。",
+    "patterns": [
+      "is not stable",
+      "waiting for it to be stable",
+      "not stable"
+    ],
+    "fix": "等待动画结束（waitFor 或显式 setTimeout）；必要时用 force:true 强制操作（跳过稳定检查）。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 61,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-hover-menu",
+    "category": "显隐/容器",
+    "symptom": "菜单项需 hover 才出现，直接 click 报 not visible。",
+    "patterns": [
+      "not visible",
+      "hover",
+      "menu item"
+    ],
+    "fix": "先 hover 父项触发菜单渲染，再 click 子项；或用 force:true 强制。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 44,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-lazy-load",
+    "category": "显隐/容器",
+    "symptom": "长列表/图片懒加载，视口外元素未渲染，报 not visible / 0 elements。",
+    "patterns": [
+      "not visible",
+      "lazy",
+      "infinite scroll",
+      "IntersectionObserver"
+    ],
+    "fix": "scrollIntoView 触发渲染后再操作；或滚到列表底部加载更多。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 37,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-css-module-class",
+    "category": "选择器精度",
+    "symptom": "选择器用了 CSS Modules 哈希类名（_abc123），重建后类名变化导致找不到。",
+    "patterns": [
+      "_",
+      "css module",
+      "hashed class",
+      "module"
+    ],
+    "fix": "改用稳定钩子：data-testid / 文本 / role / aria-label，而非构建产物哈希类名。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 55,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-captcha-antibot",
+    "category": "引擎/环境",
+    "symptom": "自动化触发验证码/人机校验，交互被拦截。",
+    "patterns": [
+      "captcha",
+      "verify you are human",
+      "anti-bot",
+      "are you a robot"
+    ],
+    "fix": "验证码类步骤不纳入自动化；用测试环境跳过/白名单账号；人工介入该步。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 29,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-rate-limit-429",
+    "category": "引擎/环境",
+    "symptom": "高频自动化触发限流，报 429 Too Many Requests。",
+    "patterns": [
+      "429",
+      "Too Many Requests",
+      "rate limit",
+      "rate-limit"
+    ],
+    "fix": "步骤间加节流/随机 delay；复用会话避免重复登录；对限流接口退避重试。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 26,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-token-expired",
+    "category": "引擎/环境",
+    "symptom": "运行中登录态过期，报 401 Unauthorized / token expired，后续全失败。",
+    "patterns": [
+      "401",
+      "Unauthorized",
+      "token expired",
+      "token",
+      "expired"
+    ],
+    "fix": "在 setup 预刷新 token / 重新登录；长任务分片避免会话超时；断言先校验已登录。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 34,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-action-timeout-generic",
+    "category": "行动性超时",
+    "symptom": "click/fill 超时：element not found / not stable / not enabled / waiting for element。",
+    "patterns": [
+      "Timeout",
+      "waiting for element",
+      "not stable",
+      "not enabled",
+      "exceeded"
+    ],
+    "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 50,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
   }
 ]

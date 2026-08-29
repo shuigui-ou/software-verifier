@@ -61,6 +61,27 @@ function guessCategory(err) {
 }
 function esc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+/**
+ * anonymize —— 抽坑即脱敏（回流安全的根基）
+ * 坑库只存「失败模式」，绝不存原始数据。写入 pitfalls.json 前剥离：
+ *   - URL（http/https）
+ *   - 文件路径（Win C:\… / Unix /home/… / node_modules/…）
+ *   - 引号串（选择器/值，常含项目结构）
+ *   - 被测软件名（调用方传入的 r.name）
+ * 匹配时也对入站错误脱敏，保证「两端一致」仍能命中。
+ * 原始 app 名仅留在本地 learnings.jsonl（不外传），用于本机跨项目诊断。
+ */
+function anonymize(text, appName) {
+  if (!text) return '';
+  let s = String(text);
+  s = s.replace(/https?:\/\/[^\s'"]+/gi, '<url>');
+  s = s.replace(/\b(?:[A-Za-z]:)?[\\/][^'"\s]{0,160}/g, '<path>');
+  s = s.replace(/["'][^"']{3,}["']/g, '<str>');
+  if (appName) s = s.split(appName).join('<app>');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  return s;
+}
+
 function runEvolution(resultPath) {
   try {
     const r = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
@@ -71,19 +92,20 @@ function runEvolution(resultPath) {
 
     for (const f of fails) {
       for (const e of (f.errors || [])) {
-        const m = matchPitfall(e, pitfalls);
+        const ae = anonymize(e, r.name); // 入站错误先脱敏再匹配/入库
+        const m = matchPitfall(ae, pitfalls);
         if (m) matched.push({ feature: f.id, error: e, pitfall: m.id });
         else {
-          const sig = String(e || '').slice(0, 90);
+          const sig = ae.slice(0, 90) || ('<脱敏错误:' + guessCategory(e) + '>');
           if (!newOnes.find(x => x.symptom === sig)) {
             newOnes.push({
               id: 'auto_' + Date.now().toString(36) + '_' + newOnes.length,
               category: guessCategory(e),
               symptom: sig,
-              consent: 'pending',
-              patterns: [esc(String(e || '').slice(0, 36))],
+              consent: 'granted', // 已脱敏、无原始数据，默认可回传（仍可用 --decline 拒）
+              patterns: ae ? [esc(ae.slice(0, 36))] : [],
               fix: '（待人工补充解法）— 首次出现，请在 evolution/pitfalls.json 补充可复用解法。',
-              apps: [r.name || '未知软件'],
+              apps: ['<anon>'], // 脱敏：不含真实项目名
               hits: 1,
               firstSeen: new Date().toISOString().slice(0, 10),
               lastSeen: new Date().toISOString().slice(0, 10)
@@ -171,4 +193,4 @@ if (require.main === module) {
   runEvolution(rp);
 }
 
-module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd };
+module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize };

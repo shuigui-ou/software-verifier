@@ -16,10 +16,11 @@
  *   拒绝(consent=declined)或尚未授权的坑只留本地，永远不会进 bundle。
  *
  * 用法：
- *   node contribute.cjs --make [--grant id,id] [--decline id,id]  打包已授权的新坑（先按用户答复标记授权/拒绝）
+ *   node contribute.cjs --share                       一键回传：自动打包所有待回传坑（已脱敏）+ 生成 bundle（推荐）
+ *   node contribute.cjs --make [--grant id,id] [--decline id,id]  兼容旧流程：先授权/拒，再打包
  *   node contribute.cjs --status        查看 已共享 / 已授权待提交 / 未授权 计数
  *   node contribute.cjs --merge <文件>  合并他人 bundle 进本地 playbook
- *   注：打包出的 bundle 需使用者手动发回维护者，脚本不自动发送。
+ *   注：抽坑即脱敏（evolve.cjs 写入时已剥离 URL/路径/项目名），bundle 不含原始数据；仍手动发回，脚本不自动发送。
  */
 'use strict';
 const fs = require('fs');
@@ -233,6 +234,52 @@ function merge(file, opts) {
   console.log('[contribute] 合并完成（已通过安全过滤）：新增 ' + added + '，更新 ' + updated + '，playbook 现共 ' + pits.length + ' 条。');
 }
 
+/**
+ * share —— 一键回传（脱敏版）
+ * 自动打包所有「未共享且未拒绝(consent != declined)」的坑（已抽坑即脱敏，无原始数据）。
+ * 最终再强制把 apps 置为 ['<anon>']，确保 bundle 不含任何真实项目名。
+ * 仍手动发回（脚本不代发，规避静默外联），符合回流安全准则。
+ */
+function share(opts) {
+  opts = opts || {};
+  const pits = loadPitfalls();
+  const ledger = loadLedger();
+  const pend = pits.filter(p => !p.shared && !ledger.shared.includes(p.id) && p.consent !== 'declined');
+  if (!pend.length) {
+    console.log('[contribute] 没有待回传的新坑（都已被你拒绝或已共享）。');
+    return;
+  }
+  const clean = [];
+  for (const p of pend) {
+    const r = sanitizePit(p);
+    if (r.ok) clean.push(r.pit);
+    else console.log('[contribute] 跳过一条本地不合规坑(' + (p.id || '?') + '): ' + r.errors.join('; '));
+  }
+  if (!clean.length) { console.log('[contribute] 待回传坑经安全过滤后无合规项，未打包。'); return; }
+  // 最终脱敏闸：外部 bundle 一律不携带真实项目名
+  for (const p of clean) p.apps = ['<anon>'];
+  fs.mkdirSync(CONTRIB_DIR, { recursive: true });
+  const bundle = {
+    skill: 'software-verifier',
+    schema: 1,
+    generatedAt: new Date().toISOString(),
+    from: (process.env.CONTRIB_FROM || 'community'),
+    anonymized: true,
+    pitfalls: clean.map(p => Object.assign({}, p, { shared: true }))
+  };
+  const f = path.join(CONTRIB_DIR, 'contribution-' + Date.now().toString(36) + '.json');
+  fs.writeFileSync(f, JSON.stringify(bundle, null, 2));
+  const ids = new Set(pend.map(p => p.id));
+  pits.forEach(p => { if (ids.has(p.id)) p.shared = true; });
+  savePitfalls(pits);
+  ledger.shared.push(...pend.map(p => p.id));
+  saveLedger(ledger);
+  console.log('[contribute] 已生成脱敏回传包 ' + pend.length + ' 条 → ' + f);
+  console.log('[contribute] 内容已自动脱敏（无 URL / 路径 / 项目名 / 原始错误），可安全发回。');
+  console.log('[contribute] 手动发回（脚本不代发）：提 PR / 丢共享目录 / 发给维护者，然后维护者执行：');
+  console.log('           node contribute.cjs --merge "' + f + '"');
+}
+
 function status() {
   const pits = loadPitfalls();
   const ledger = loadLedger();
@@ -247,7 +294,8 @@ if (require.main === module) {
   let mode = null, file = null, grant = [], decline = [], check = false;
   const splitIds = (s) => String(s).split(/[ ,]+/).filter(Boolean);
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--make') mode = 'make';
+    if (args[i] === '--share') mode = 'share';
+    else if (args[i] === '--make') mode = 'make';
     else if (args[i] === '--status') mode = 'status';
     else if (args[i] === '--merge') mode = 'merge';
     else if (args[i] === '--check') check = true;
@@ -255,8 +303,9 @@ if (require.main === module) {
     else if (args[i] === '--decline') { mode = 'make'; decline = splitIds(args[++i]); }
     else if (!args[i].startsWith('--') && mode === 'merge' && !file) file = args[i]; // 位置参数作为 bundle 文件
   }
-  if (!mode) { console.error('用法: node contribute.cjs --make [--grant id,id] [--decline id,id] | --status | --merge <bundle.json> [--check]'); process.exit(2); }
-  if (mode === 'make') make({ grant, decline });
+  if (!mode) { console.error('用法: node contribute.cjs --share(一键回传脱敏包) | --make [--grant id,id] [--decline id,id] | --status | --merge <bundle.json> [--check]'); process.exit(2); }
+  if (mode === 'share') share({ grant, decline });
+  else if (mode === 'make') make({ grant, decline });
   else if (mode === 'status') status();
   else if (mode === 'merge') { if (!file) { console.error('缺少 bundle 文件'); process.exit(2); } merge(file, { check }); }
 }
