@@ -1,4 +1,5 @@
 'use strict';
+const { assertSafeExpr } = require('./safe-expr.cjs');
 /**
  * 微信小程序驱动（基于 miniprogram-automator，驱动微信开发者工具模拟器）
  *
@@ -89,6 +90,8 @@ function createMiniprogramDriver(PW_CORE) {
   }
 
   async function assertEval(expr) {
+    const chk = assertSafeExpr(expr);
+    if (!chk.ok) return { pass: false, detail: '安全校验未通过: ' + chk.reason };
     try {
       const pass = await miniProgram.evaluate(new Function('return (' + expr + ');'));
       return { pass: !!pass, detail: `eval(${expr}) = ${!!pass}` };
@@ -114,6 +117,8 @@ function createMiniprogramDriver(PW_CORE) {
     return { ok: false, err: 'waitText 超时: ' + text };
   }
   async function exec(js) {
+    const chk = assertSafeExpr(js);
+    if (!chk.ok) return { ok: false, err: '安全校验未通过: ' + chk.reason };
     try { const r = await miniProgram.evaluate(new Function(js)); return { ok: true, r }; }
     catch (e) { return { ok: false, err: e.message }; }
   }
@@ -123,6 +128,10 @@ function createMiniprogramDriver(PW_CORE) {
   }
   async function getBusyDone(busySel, doneEval) {
     // 小程序无通用 busy 标识：用 doneEval 在 miniProgram 全局求值；busy 默认 false
+    if (doneEval) {
+      const chk = assertSafeExpr(doneEval);
+      if (!chk.ok) return { busy: false, done: false, err: '安全校验未通过: ' + chk.reason };
+    }
     let done = false;
     if (doneEval) { try { done = !!(await miniProgram.evaluate(new Function('return (' + doneEval + ');'))); } catch (e) {} }
     return { busy: false, done };

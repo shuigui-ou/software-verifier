@@ -3,7 +3,7 @@ name: software-verifier
 displayName: 软件功能全量验证器
 description: 像真人一样按说明书把软件功能全量验证一遍。解析说明书→生成可选功能清单→用本机自动化驱动（无头 Edge / Electron / 微信小程序 / Appium 原生 App）真实点击/填表/触发功能→截图+抓错误+断言→产出 ✅/❌ 报告。验证完只出报告、不修软件；并带自进化知识库，每次跑完把踩坑沉淀成可复用解法，越用越强。适用于 Web、Electron 桌面、微信小程序、原生移动 App 的功能走查与回归验证。
 author: user_12807b25
-version: 1.2.0
+version: 1.2.1
 category: 开发工具
 tags: [软件测试, 功能走查, 回归验证, 自动化, 无头浏览器, 自进化, MCP验收]
 trigger:
@@ -143,6 +143,12 @@ software-verifier 不只「被调用」，还能**作为 MCP client 去检查另
 - 默认 `browser` 用 `playwright-core` 的 `channel:'msedge'` 启本机无头 Edge（需装 Microsoft Edge）。路径：`C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node_modules/playwright-core`（`PW_CORE` 可覆盖）。
 - 引擎已全局**自动接受 `prompt()`/dialog**，兼容"新建项目/导出选择"类弹窗（仅 browser/electron）。
 - 启动即自动 `goto(BASE+"/")`，无需在 spec 里写首屏导航。
+
+## 安全与信任边界
+
+- **断言表达式来源可信**：`assertEval`/`exec`/`getBusyDone` 运行的 JS 表达式**仅来自你本地编写的 spec 文件**（说明书），属 by-design 的可信输入；执行前经 `drivers/safe-expr.cjs` 黑名单校验，拦截 `require`/`process`/`child_process`/`fs`/`eval`/`Function`/`constructor`/`__proto__`/`globalThis`/`fetch` 等危险标识符，防止任意代码执行。
+- **路径经环境变量覆盖（无硬编码绑定）**：`playwright-core` 路径读 `process.env.PW_CORE`、`Node` 路径读 `process.env.SV_NODE`，均 `env || 开发机默认兜底`——部署到任意机器只需设环境变量，无需改代码。
+- **零依赖、不传云端**：全程本机运行，spec 与结果不上传第三方；自进化知识库仅存本地 `evolution/`。
 
 ## 驱动对照
 

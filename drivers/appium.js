@@ -1,4 +1,5 @@
 'use strict';
+const { assertSafeExpr } = require('./safe-expr.cjs');
 /**
  * 原生移动 App 驱动（基于 Appium + webdriverio）
  *
@@ -72,6 +73,8 @@ function createAppiumDriver(PW_CORE) {
     try { return await driver.getPageSource(); } catch (e) { return ''; }
   }
   async function assertEval(expr) {
+    const chk = assertSafeExpr(expr);
+    if (!chk.ok) return { pass: false, detail: '安全校验未通过: ' + chk.reason };
     try { const pass = await driver.executeScript('return (' + expr + ');'); return { pass: !!pass, detail: `eval(${expr}) = ${!!pass}` }; }
     catch (e) { return { pass: false, detail: 'eval 异常: ' + e.message }; }
   }

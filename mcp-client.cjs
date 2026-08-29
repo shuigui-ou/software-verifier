@@ -64,7 +64,7 @@ function connect({ command, args = [], env = {} }, opts = {}) {
     await request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: clientInfo || { name: 'software-verifier', version: '1.2.0' },
+      clientInfo: clientInfo || { name: 'software-verifier', version: '1.2.1' },
     });
     // 发送 initialized 通知（无 id，server 不回）
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');

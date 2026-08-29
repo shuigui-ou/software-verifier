@@ -12,6 +12,7 @@
 const path = require('path');
 const { healClickSel, healFillSel, healWaitSel } = require(path.join(__dirname, '..', 'drivers', 'heal.cjs'));
 const visual = require(path.join(__dirname, '..', 'drivers', 'visual.cjs'));
+const { assertSafeExpr } = require(path.join(__dirname, 'safe-expr.cjs'));
 
 function makeDomDriver(kind, PW_CORE) {
   let browser, page;
@@ -145,6 +146,8 @@ function makeDomDriver(kind, PW_CORE) {
   }
 
   async function assertEval(expr) {
+    const chk = assertSafeExpr(expr);
+    if (!chk.ok) return { pass: false, detail: '安全校验未通过: ' + chk.reason };
     try {
       const pass = await page.evaluate(`(function(){ try { return !!(${expr}); } catch(e){ return false; } })()`);
       return { pass, detail: `eval(${expr}) = ${pass}` };
@@ -172,6 +175,8 @@ function makeDomDriver(kind, PW_CORE) {
     catch (e) { return { ok: false, err: 'waitText 超时: ' + text }; }
   }
   async function exec(js) {
+    const chk = assertSafeExpr(js);
+    if (!chk.ok) return { ok: false, err: '安全校验未通过: ' + chk.reason };
     try { const r = await page.evaluate(js); return { ok: true, r }; }
     catch (e) { return { ok: false, err: e.message }; }
   }
@@ -181,6 +186,10 @@ function makeDomDriver(kind, PW_CORE) {
   }
   // AI 步骤轮询：返回 {busy, done}
   async function getBusyDone(busySel, doneEval) {
+    if (doneEval) {
+      const chk = assertSafeExpr(doneEval);
+      if (!chk.ok) return { busy: false, done: false, err: '安全校验未通过: ' + chk.reason };
+    }
     return await page.evaluate(({ busySel, doneEval }) => {
       let busy = false;
       try { busy = !!document.querySelector(busySel); } catch (e) {}

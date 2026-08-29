@@ -17,9 +17,9 @@
  * {
  *   "mcpServers": {
  *     "software-verifier": {
- *       "command": "C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node.exe",
- *       "args": ["C:/Users/199720.PC2775/.workbuddy/skills/software-verifier/mcp-server.cjs"],
- *       "env": { "PW_CORE": "C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node_modules/playwright-core" }
+ *       "command": "${SV_NODE:-node}",                                 // 用环境变量 SV_NODE 覆盖 Node 路径
+ *       "args": ["<skill_dir>/mcp-server.cjs"],                        // skill 目录下的 mcp-server.cjs
+ *       "env": { "PW_CORE": "${PW_CORE:-playwright-core 路径}" }      // 用环境变量 PW_CORE 覆盖 playwright-core 路径
  *     }
  *   }
  * }
@@ -254,7 +254,7 @@ rl.on('line', async (line) => {
   try { req = JSON.parse(t); } catch (e) { return; }
   const id = req.id;
   if (req.method === 'initialize') {
-    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.2.0' } } });
+    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'software-verifier', version: '1.2.1' } } });
   }
   if (req.method === 'notifications/initialized') return; // 通知，无回复
   if (req.method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
