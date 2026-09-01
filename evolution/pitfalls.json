@@ -131,11 +131,12 @@
     ],
     "fix": "先展开容器/切到对应 tab/触发渲染（clickText 打开菜单），再操作目标；或 exec 直接操作 DOM。",
     "apps": [
-      "<public>"
+      "<public>",
+      "ai-novel-studio"
     ],
-    "hits": 95,
+    "hits": 96,
     "firstSeen": "2026-08-29",
-    "lastSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
     "shared": true,
     "consent": "granted",
     "seed": true
@@ -296,11 +297,12 @@
     ],
     "fix": "用 frameLocator('iframe').locator(...) 切到正确 frame 再操作。",
     "apps": [
-      "<public>"
+      "<public>",
+      "ai-novel-studio"
     ],
-    "hits": 47,
+    "hits": 48,
     "firstSeen": "2026-08-29",
-    "lastSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
     "shared": true,
     "consent": "granted",
     "seed": true
@@ -438,11 +440,12 @@
     ],
     "fix": "改用稳定钩子：data-testid / 文本 / role / aria-label，而非构建产物哈希类名。",
     "apps": [
-      "<public>"
+      "<public>",
+      "ai-novel-studio · 番外按意见重写"
     ],
-    "hits": 55,
+    "hits": 56,
     "firstSeen": "2026-08-29",
-    "lastSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
     "shared": true,
     "consent": "granted",
     "seed": true
@@ -502,11 +505,12 @@
     ],
     "fix": "在 setup 预刷新 token / 重新登录；长任务分片避免会话超时；断言先校验已登录。",
     "apps": [
-      "<public>"
+      "<public>",
+      "ai-novel-studio · 番外按意见重写"
     ],
-    "hits": 34,
+    "hits": 36,
     "firstSeen": "2026-08-29",
-    "lastSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
     "shared": true,
     "consent": "granted",
     "seed": true
@@ -524,13 +528,197 @@
     ],
     "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
     "apps": [
-      "<public>"
+      "<public>",
+      "记忆宫殿训练工作台（UI 预览原型）"
     ],
-    "hits": 50,
+    "hits": 57,
     "firstSeen": "2026-08-29",
-    "lastSeen": "2026-08-29",
+    "lastSeen": "2026-08-31",
     "shared": true,
     "consent": "granted",
     "seed": true
+  },
+  {
+    "id": "anon-clicktext",
+    "category": "未知",
+    "symptom": "步骤 clickText 失败:",
+    "patterns": [
+      "clickText 失败"
+    ],
+    "fix": "clickText 未找到可点击文本。文本可能在 overlay / 动画后出现、或被截断；改用 clickSel + 稳定选择器；确认元素可点击（未被 pointer-events:none 遮罩拦截，见 seed-overlay-intercept）。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 3,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
+  },
+  {
+    "id": "anon-selector-miss",
+    "category": "显隐/容器",
+    "symptom": "断言失败: 选择器 .side-view 命中 0 个（要求≥1）；或步骤 waitSel 超时(含自愈)",
+    "patterns": [
+      "命中 0 个",
+      "waitSel 超时",
+      "!!document.querySelector",
+      "getElementById",
+      "querySelector("
+    ],
+    "fix": "元素未出现或等待超时。先确认是否在 overlay / iframe / shadow DOM 内（需切上下文或穿透）；选择器失效时启用自愈 Healer，按 data-testid→aria-label→role+文本 稳定信号找回等价元素；建议给目标元素加 data-testid 提升验证稳定性。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 26,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 24
+  },
+  {
+    "id": "anon-assert-count",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.querySelectorAll(<str>).length===10) = false",
+    "patterns": [
+      "querySelectorAll"
+    ],
+    "fix": "列表项数量不符。确认数据是否已加载完（分页 / 懒加载 / 动画），必要时等待后再数；区分「恰好 N」与「至少 N」语义；数量变化属预期时改用 >= 阈值断言。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 13,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 13
+  },
+  {
+    "id": "anon-assert-text",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).textContent.includes(<str>)) = false",
+    "patterns": [
+      "textContent",
+      "textcontent",
+      "indexof",
+      "includes("
+    ],
+    "fix": "文本断言未命中。可能：(a) 文本异步渲染 / 动画后才出现→先 waitSel 或轮询；(b) 含不可见字符 / 大小写差异→断言做 trim() + toLowerCase()；(c) 元素未挂载→先断言元素存在再比文本。优先用稳定文本 / role 信号，避免依赖动态拼接文本。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 8,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 8
+  },
+  {
+    "id": "anon-eval-undef",
+    "category": "断言语义",
+    "symptom": "步骤 exec 失败: page.evaluate: ReferenceError: trainphase is not defined at eval...",
+    "patterns": [
+      "is not defined at eval",
+      "ReferenceError"
+    ],
+    "fix": "eval 表达式引用了页面作用域不存在的变量（trainphase / toggleRef / showStory 等组件内部状态）。validate 的 eval 不应读取框架内部变量名——它们常未挂到 window 且随实现变化。改为用稳定 DOM 信号（data-testid / text / role / classList）表达断言；若必须读状态，先确认该变量已显式挂到 window。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 9,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 9
+  },
+  {
+    "id": "anon-assert-class",
+    "category": "显隐/容器",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).classList.contains(<str>))",
+    "patterns": [
+      "classList.contains"
+    ],
+    "fix": "类名 / 显隐状态断言失败。确认元素是否真在当前 DOM（被 v-if / 条件渲染移除时 getElementById 返回 null）；类名若是 CSS Module 哈希（如 _abc123）会随机变化→用 data-testid 或稳定业务 class 而非编译后哈希类；显隐优先用 :visible 或 aria-hidden 判断。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 4,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 4
+  },
+  {
+    "id": "anon-assert-prop",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).width>0) = false",
+    "patterns": [
+      ".width>0",
+      "disabled===false",
+      ".value.length",
+      "parseInt("
+    ],
+    "fix": "属性断言失败。元素可能未渲染完成（width=0 说明还没布局或隐藏）→先等可见再断言；disabled / value 用稳定状态信号；读取前先判空。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 3,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 3
+  },
+  {
+    "id": "anon-eval-null",
+    "category": "断言语义",
+    "symptom": "步骤 exec 失败: page.evaluate: TypeError: Cannot read properties of null (reading ...)",
+    "patterns": [
+      "cannot read properties of null",
+      "reading '"
+    ],
+    "fix": "eval 拿到 null 元素仍访问其属性（.width / .textContent 等）。先 !!document.querySelector(sel) 判空再读取；元素未挂载时先等待再断言。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
+  },
+  {
+    "id": "anon-ai-fail",
+    "category": "未知",
+    "symptom": "步骤 ai 失败:",
+    "patterns": [
+      "步骤 ai 失败"
+    ],
+    "fix": "AI 步骤执行失败。检查 LLM token 是否过期 / 超额（见 seed-token-expired）；网络抖动重试；确认该步骤输入上下文是否过长触发截断。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 4,
+    "firstSeen": "2026-09-01",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
   }
 ]
