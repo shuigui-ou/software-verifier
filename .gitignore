@@ -24,3 +24,6 @@ evolution/contrib/
 
 # 视觉基线（本机本地指纹，不入库）
 evolution/visual-baselines/
+
+# 进化内核机器数据（审计链/账本/信号/快照，纯本机运行期产物，不入库）
+.evolution/
