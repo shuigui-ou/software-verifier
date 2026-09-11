@@ -31,7 +31,7 @@ const args = process.argv.slice(2);
 const opt = {
   spec: null, url: null, out: null, uiOnly: false, also: [], only: [], ai: 'off',
   driver: 'browser', app: null, platform: 'android', caps: null,
-  appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true,
+  appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true, evolve: false,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -50,9 +50,10 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--appium-port') opt.appiumPort = parseInt(args[++i], 10);
   else if (a === '--port') opt.port = parseInt(args[++i], 10);
   else if (a === '--no-heal') opt.heal = false;
+  else if (a === '--evolve') opt.evolve = args[++i] === 'on';
 }
 if (!opt.spec || !opt.url) {
-  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--driver browser|electron|miniprogram|appium] [--out <dir>]');
+  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--driver browser|electron|miniprogram|appium] [--out <dir>] [--evolve on]');
   process.exit(2);
 }
 
@@ -182,7 +183,9 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     writeMarkdown(result, OUT + '/VERIFY-报告.md');
     writeHtml(result, OUT + '/VERIFY-报告.html');
     log('报告已写入: ' + OUT);
-    runEvolution(OUT + '/result.json');
+    // 自进化默认静默：接入共享进化引擎前，不再无审计地自动落盘 pitfalls/learnings。
+    // 需要旧行为时显式 --evolve on（仍可手动: node evolve.cjs --result <result.json>）。
+    if (opt.evolve) runEvolution(OUT + '/result.json');
     log('💡 若本次有新踩坑想回馈社区：node contribute.cjs --make（打包后发回维护者合并）');
   } catch (e) {
     log('FATAL ' + (e && e.stack || e));

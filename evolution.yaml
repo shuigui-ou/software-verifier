@@ -1,0 +1,43 @@
+# =====================================================================
+# software-verifier · evolution.yaml v1（声明式进化接入契约 · Host B）
+#
+# 设计原则：最小侵入 + 通用 engine（数据即接入）。
+#   - 本文件只做「声明」，不改动 verify.cjs / evolve.cjs 既有算法：
+#     verify.cjs 默认静默（opt.evolve 为真才触发旧 runEvolution），本声明不改变该行为。
+#   - knowledge 白名单指向既有知识资产（evolution/pitfalls.json + learnings.jsonl），
+#     任意宿主/engine 读取这些经验都须经内核白名单前缀校验（PATH_NOT_WHITELISTED 硬拒）。
+#   - 相对路径锚点：knowledge.root / kernel.dataDir 相对本 yaml 所在目录（skill 根）。
+#     kernel 机器数据（ledger/audit/snapshots 等）落在 <skill>/.evolution/，
+#     与面向人的 evolution/ 资产分开，互不污染。
+#   - evolve.cjs 的 pitfalls 匹配/合并算法不在本文件范围内重写（既有玩法不动，
+#     只由内核外包审计/快照/权限/白名单校验）。
+# =====================================================================
+schema: 1
+
+meta:
+  agent: software-verifier
+  version: 1.0.0
+
+kernel:
+  # 内核机器数据目录（相对 skill 根；隐藏目录，不进 evolution/ 资产区）
+  dataDir: .evolution
+  level: auto_report
+  enabled: true
+  audit: true
+  dailyLimit: 20
+  # 完整六原语声明 → resolveTier 升 P4（未来接原语时可直接复用，无需改接线代码）
+  primitives: [tap, pre_action, interrupt, write, checkpoint, audit]
+
+knowledge:
+  # 知识面根 = <skill>/evolution/（既有人读资产所在目录）
+  root: evolution
+  # 白名单（相对 knowledge.root）：pitfalls.json 为可复用解法 playbook（JSON），
+  # learnings.jsonl 为原始运行流（首个 .jsonl → 默认落地面）。
+  whitelist:
+    - pitfalls.json
+    - learnings.jsonl
+
+objectives:
+  - title: 压制验证失败复现率（同一失败模式不再反复出现）
+    types: [E]
+    weight: 5

@@ -118,6 +118,24 @@ function extractPatterns(ae) {
   pats.add((ae || '').slice(0, 36)); // 兜底前缀
   return [...pats].filter(Boolean).map(esc);
 }
+// 同签名归并（v1.2.6 自维护核心）：同一组 SYN_KEYS 视为同一失败模式家族，
+// 跨运行自动合并进已有坑（累加 hits + 并入变体模式），不再新建噪坑。
+// 这样库永远自洁净，不需要人工去重。
+function synSigOf(patterns) {
+  const s = new Set();
+  for (const k of SYN_KEYS) {
+    if ((patterns || []).some(p => String(p).toLowerCase().includes(k))) s.add(k);
+  }
+  return [...s].sort().join('|');
+}
+function findMergeTarget(pitfalls, newOnes, ae) {
+  const sig = synSigOf(extractPatterns(ae));
+  if (!sig) return null;
+  for (const p of [...pitfalls, ...newOnes]) {
+    if (synSigOf(p.patterns) === sig) return p;
+  }
+  return null;
+}
 
 /**
  * anonymize —— 抽坑即脱敏（回流安全的根基）
@@ -155,7 +173,15 @@ function runEvolution(resultPath) {
         if (m) matched.push({ feature: f.id, error: e, pitfall: m.id });
         else {
           const sig = ae.slice(0, 90) || ('<脱敏错误:' + guessCategory(e) + '>');
-          if (!newOnes.find(x => x.symptom === sig)) {
+          // 同签名归并：已有同 SYN_KEYS 家族的坑 → 并入（累加 hits + 扩大模式），不新建噪坑。
+          const target = findMergeTarget(pitfalls, newOnes, ae);
+          if (target) {
+            target.hits = (target.hits || 0) + 1;
+            target.lastSeen = new Date().toISOString().slice(0, 10);
+            const pats = extractPatterns(ae);
+            for (const p of pats) if (!(target.patterns || []).includes(p)) target.patterns.push(p);
+            if (!target.symptom || target.symptom.startsWith('<脱敏错误')) target.symptom = sig;
+          } else if (!newOnes.find(x => x.symptom === sig)) {
             newOnes.push({
               id: 'auto_' + Date.now().toString(36) + '_' + newOnes.length,
               category: guessCategory(e),
