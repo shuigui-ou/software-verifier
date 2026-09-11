@@ -21,10 +21,33 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
-const PW_CORE = process.env.PW_CORE ||
-  'C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node_modules/playwright-core';
 const SKILL_DIR = __dirname;
+
+// 自动定位 playwright-core（源码内零硬编码路径）：
+//   env PW_CORE → require.resolve → 与当前 node 同级 / WorkBuddy 托管各版本 / 全局 npm → 明确报错
+function resolvePwCore() {
+  if (process.env.PW_CORE) return process.env.PW_CORE;
+  for (const base of [SKILL_DIR, process.cwd(), path.dirname(process.execPath)].filter(Boolean)) {
+    try { const p = require.resolve('playwright-core', { paths: [base] }); if (p) return p; } catch (e) {}
+  }
+  const cands = [path.join(path.dirname(process.execPath), 'node_modules', 'playwright-core')];
+  try {
+    const binRoot = path.join(os.homedir(), '.workbuddy', 'binaries', 'node', 'versions');
+    for (const v of fs.readdirSync(binRoot)) cands.push(path.join(binRoot, v, 'node_modules', 'playwright-core'));
+  } catch (e) {}
+  try {
+    const out = require('child_process').execSync('npm root -g', { encoding: 'utf8' }).trim().split(/\r?\n/);
+    for (const gr of out) cands.push(path.join(gr, 'playwright-core'));
+  } catch (e) {}
+  for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
+  throw new Error(
+    '[software-verifier] 未找到 playwright-core。请任选其一：\n' +
+    '  (a) 设环境变量 PW_CORE=<node_modules/playwright-core 的绝对路径>\n' +
+    '  (b) 在 skill 目录安装依赖：npm i playwright-core'
+  );
+}
 
 // ---------- 参数解析 ----------
 const args = process.argv.slice(2);
@@ -72,19 +95,32 @@ const { runEvolution, loadPitfalls, matchPitfall, anonymize } = require(SKILL_DI
 const PITFALLS = loadPitfalls();
 const hintFor = (text) => { const p = matchPitfall(anonymize(text || ''), PITFALLS); return p ? ' 💡 已知坑[' + p.id + ']: ' + p.fix : ''; };
 
+// ---------- agent-evolution 共享进化引擎接入（turnkey 适配器，全程 fail-open） ----------
+// 引擎未就绪 / require 失败 / 初始化异常 → evo 为 null，所有调用安全 no-op，不影响验证主流程。
+let evo = null;
+try { evo = require(SKILL_DIR + '/evolution-host.cjs'); evo.init({ autoStart: false }); }
+catch (_e) { /* 引擎未就绪则完全旁路 */ }
+const evoTap = (e, ctx) => { try { if (evo) evo.tapError(e, ctx); } catch (_e) {} };
+const evoRun = async () => { try { if (evo) await evo.runCycle(); } catch (_e) {} };
+// 行为闭环：读取侧（引擎复发记忆 + pre_action 已知经验）与执行器（启动前自愈预检）
+const evoSelfHeal = require(SKILL_DIR + '/preflight.cjs');
+const evoRecurring = () => { try { return evo ? evo.recurringErrors({ minHits: 1 }) : []; } catch (_e) { return []; } };
+const evoAdvisory = (action) => { try { const g = evo ? evo.preActionGate({ action }) : null; return (g && g.inject && g.inject.text) ? g.inject.text : ''; } catch (_e) { return ''; } };
+
 // ---------- 驱动加载 ----------
 function loadDriver(name) {
+  const pwCore = resolvePwCore();
   if (name === 'browser' || name === 'electron') {
     const { makeDomDriver } = require(SKILL_DIR + '/drivers/dom.js');
-    return makeDomDriver(name, PW_CORE);
+    return makeDomDriver(name, pwCore);
   }
   if (name === 'miniprogram') {
     const { createMiniprogramDriver } = require(SKILL_DIR + '/drivers/miniprogram.js');
-    return createMiniprogramDriver(PW_CORE);
+    return createMiniprogramDriver(pwCore);
   }
   if (name === 'appium') {
     const { createAppiumDriver } = require(SKILL_DIR + '/drivers/appium.js');
-    return createAppiumDriver(PW_CORE);
+    return createAppiumDriver(pwCore);
   }
   throw new Error('未知驱动: ' + name + '（支持 browser|electron|miniprogram|appium）');
 }
@@ -107,11 +143,48 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
   try {
     drv = loadDriver(opt.driver);
     drv.setHeal(opt.heal);
+
+    // ---------- 进化闭环（读取侧 + 行为改变）：启动前自愈预检 ----------
+    // 从引擎"学到的复发记忆"判定该动作是否有"端口占用"类复发风险（**证据驱动**：只有本机学到过才动作；
+    // 坑库仅用于提示）→ 若有，则 launch 前先探测端口，占用就改用空闲端口（把反复出现的 EADDRINUSE 变成不再发生）。
+    try {
+      const adv = evoAdvisory('driver.launch');
+      if (adv) log('🧠 进化经验（launch 动作）：' + adv);
+      const risks = evoRecurring();
+      if (evoSelfHeal.portRisk({ risks })) {
+        const pf = await evoSelfHeal.ensureFreePort(opt.port);
+        if (pf.moved) {
+          log('🛡 预检自愈：端口 ' + pf.original + ' 被占用 → 自动改用 ' + pf.port + '（知识库判定为复发风险，已避免 EADDRINUSE）');
+          opt.port = pf.port;
+        }
+      }
+    } catch (_e) { /* 预检失败不影响主流程 */ }
+
     await drv.launch({ appPath: opt.app, platform: opt.platform, caps: opt.caps, appiumUrl: opt.appiumUrl, appiumPort: opt.appiumPort, port: opt.port });
     log('=== software-verifier [' + opt.driver + ']: ' + spec.name + ' @ ' + BASE + ' ===');
 
-    // 启动即导航到被测地址（URL 类驱动：browser/electron/miniprogram/appium 都基于一个可访问的入口）
-    await drv.goto(BASE + '/');
+    // ---------- 进化闭环（网络类）：导航前等待目标可达 + 导航重试 ----------
+    // 与端口预检同构：读侧判定"是否有网络类复发记忆"，命中则把"目标还没起来"变成"等一下就好了"。
+    let netRisky = false;
+    try {
+      const nr = evoSelfHeal.networkRisk({ risks: evoRecurring() });
+      netRisky = !!(nr && nr.risky);
+      if (netRisky) {
+        const wr = await evoSelfHeal.waitReachable(BASE + '/', { retries: 6, delayMs: 700, timeoutMs: 2000 });
+        log(wr.reachable
+          ? '🛡 预检自愈：目标 ' + BASE + ' 等待 ' + wr.waitedMs + 'ms 后可达（第 ' + wr.attempts + ' 次探测 · 知识库判定为网络类复发风险，已避免 ECONNREFUSED）'
+          : '⚠ 预检自愈：目标 ' + BASE + ' 探测 ' + wr.attempts + ' 次仍不可达（' + (wr.error || '') + '），仍按原流程尝试导航');
+      }
+    } catch (_e) { /* 网络预检失败不影响主流程 */ }
+
+    // 启动即导航到被测地址（命中网络风险时带重试）
+    const gotoAttempts = netRisky ? 3 : 1;
+    let gotoOk = false, gotoErr = null;
+    for (let i = 0; i < gotoAttempts; i++) {
+      try { await drv.goto(BASE + '/'); gotoOk = true; if (i > 0) log('🛡 导航重试成功（第 ' + (i + 1) + ' 次）'); break; }
+      catch (e) { gotoErr = e; if (i < gotoAttempts - 1) await drv.wait(800); }
+    }
+    if (!gotoOk) throw (gotoErr || new Error('导航失败: ' + BASE));
     await drv.wait(1000);
 
     if (spec.setup) for (const s of spec.setup) { const r = await runStep(drv, s); if (!r.ok) log('  setup 步骤失败: ' + (r.err || '')); }
@@ -141,7 +214,7 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
         for (const s of (f.steps || [])) {
           const r = await runStep(drv, s);
           frec.steps.push({ do: s.do, text: s.text || s.sel || '', ...r });
-          if (!r.ok) { frec.pass = false; frec.errors.push('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')); log('   ✗ 步骤 ' + s.do + ': ' + (r.err || r.detail || '')); }
+          if (!r.ok) { frec.pass = false; frec.errors.push('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')); log('   ✗ 步骤 ' + s.do + ': ' + (r.err || r.detail || '')); evoTap(new Error('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')), { taskId: 'verify' }); }
           if (s.screenshot) await drv.screenshot(SHOTS + '/' + s.screenshot).catch(() => {});
         }
         const shot = (f.id + '_' + f.name).replace(/[^\w一-龥]/g, '_') + '.png';
@@ -151,15 +224,16 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
         for (const a of (f.asserts || [])) {
           const ar = await runAssert(drv, a);
           frec.asserts.push({ desc: a.desc || a.sel || a.eval || a.includes || '', ...ar });
-          if (!ar.pass) { frec.pass = false; frec.errors.push('断言失败: ' + ar.detail + hintFor(ar.detail)); }
+          if (!ar.pass) { frec.pass = false; frec.errors.push('断言失败: ' + ar.detail + hintFor(ar.detail)); evoTap(new Error('断言失败: ' + ar.detail), { taskId: 'verify' }); }
           log('   ' + (ar.pass ? '✓' : '✗') + ' ' + (a.desc || ar.detail));
         }
         const drvErrs = (drv.featureErrors || []).slice();
-        if (drvErrs.length) { frec.pass = false; frec.errors = frec.errors.concat(drvErrs.map(e => e + hintFor(e))); (errors.push.apply(errors, drvErrs)); }
+        if (drvErrs.length) { frec.pass = false; frec.errors = frec.errors.concat(drvErrs.map(e => e + hintFor(e))); (errors.push.apply(errors, drvErrs)); drvErrs.forEach(e => evoTap(new Error(e), { taskId: 'verify', source: 'driver' })); }
       } catch (e) {
         const em = (e && e.message || String(e));
         frec.pass = false; frec.errors.push('异常: ' + em + hintFor(em));
         log('   ✗ 异常: ' + em);
+        evoTap(e, { taskId: 'verify', source: 'feature' });
         const shotE = 'ERR_' + f.id + '.png';
         await drv.screenshot(SHOTS + '/' + shotE).catch(() => {});
         frec.screenshot = 'shots/' + shotE;
@@ -186,9 +260,25 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     // 自进化默认静默：接入共享进化引擎前，不再无审计地自动落盘 pitfalls/learnings。
     // 需要旧行为时显式 --evolve on（仍可手动: node evolve.cjs --result <result.json>）。
     if (opt.evolve) runEvolution(OUT + '/result.json');
+    // 共享进化引擎：把本轮采集到的错误信号跑一轮八步链路（tap 已在各报错点完成），落盘 learnings + 审计。
+    await evoRun();
+    // 进化闭环（显性化）：把引擎状态回显出来，避免"学到的经验没人看"。
+    try {
+      const st = evo ? evo.status() : null;
+      if (st && st.tier) log('🧠 进化：tier=' + st.tier + ' · 已捕获错误信号 ' + (st.errorSignals || 0) + ' 条 · 审计链 ' + (st.auditVerify ? '完整' : '异常'));
+    } catch (_e) { /* ignore */ }
+    // 复发哨兵：检测"已落地但仍在复发"的候选（loop 自检——land 了却没止住 → 判候选无效并回写否决）
+    try {
+      const sen = evo ? evo.recurrenceSentinel({ minRecur: 1 }) : null;
+      if (sen && sen.stale && sen.stale.length) {
+        log('⚠ 复发哨兵：' + sen.stale.length + ' 个指纹在"落地后仍复发" → 判定候选无效' + (sen.vetoed ? '（已否决 ' + sen.vetoed + ' 个）' : ''));
+        for (const s of sen.stale.slice(0, 5)) log('   • ' + s.fingerprint + ' v' + (s.version || '?') + ' 已落地 ' + (s.landCount || 1) + ' 次、首次落地后仍复发 ' + s.recursAfter + ' 次：' + String(s.title || '').slice(0, 70));
+      }
+    } catch (_e) { /* ignore */ }
     log('💡 若本次有新踩坑想回馈社区：node contribute.cjs --make（打包后发回维护者合并）');
   } catch (e) {
     log('FATAL ' + (e && e.stack || e));
+    evoTap(e, { taskId: 'verify', source: 'fatal' });
   } finally {
     if (drv) await drv.close().catch(() => {});
   }
