@@ -21,6 +21,8 @@ meta:
 kernel:
   # 内核机器数据目录（相对 skill 根；隐藏目录，不进 evolution/ 资产区）
   dataDir: .evolution
+  # vendored 内核位置（relative skill 根）：agent-evolution kernel/src 已复制进 lib/evolution-kernel/src
+  kernelRoot: lib/evolution-kernel/src
   level: auto_report
   enabled: true
   audit: true
