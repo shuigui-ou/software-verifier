@@ -36,18 +36,38 @@ function savePitfalls(arr) {
   fs.writeFileSync(PITFALLS, JSON.stringify(arr, null, 2));
 }
 function matchPitfall(text, pitfalls) {
+  matchPitfall.lastPattern = '';
   if (!text) return null;
   // 安全：用字面量子串匹配（大小写不敏感），绝不对 patterns 执行 new RegExp —— 避免恶意 bundle 注入 / ReDoS。
   // 大小写不敏感：同类报错只要核心词相同（如 Not Clickable / not clickable）即可命中，不再因大小写漏配。
-  text = String(text).toLowerCase();
-  let best = null;
+  // 归因优先级（v1.2.7 修）：**最长命中 pattern 优先**，并列时比 hits。
+  //   旧行为只按 hits 取最大 → 泛 pattern 条目会击败专门为它写的种子，给 agent 递【错误】的解法。实测误归因 3/20：
+  //     'locator resolved to hidden <div>'（真实=显隐）→ 被 'resolved to' 归到 seed-strict-mode-multiple
+  //     'locator resolved to 0 elements'（真实=0 元素）→ 同上，抢走了专为此写的 seed-zero-elements
+  //   具体度更强的 pattern（如 'strict mode violation' 21 字 > 'resolved to' 11 字）才应胜出。
+  // 只改打分、不改契约：无任何 pattern 命中仍返回 null；仅一条命中时结果与旧实现完全一致。
+  const t = String(text).toLowerCase();
+  let best = null, bestLen = -1, bestHits = -1;
   for (const p of pitfalls) {
+    let longest = -1;
     for (const pat of (p.patterns || [])) {
-      if (typeof pat === 'string' && pat && text.includes(pat.toLowerCase())) {
-        if (!best || (p.hits || 0) > (best.hits || 0)) best = p;
-        break;
-      }
+      if (typeof pat !== 'string' || !pat) continue;
+      const s = pat.toLowerCase();
+      if (t.includes(s) && s.length > longest) longest = s.length;
     }
+    if (longest < 0) continue;
+    const hits = p.hits || 0;
+    if (longest > bestLen || (longest === bestLen && hits > bestHits)) {
+      best = p; bestLen = longest; bestHits = hits;
+    }
+  }
+  if (best) {
+    let wp = '';
+    for (const pat of (best.patterns || [])) {
+      const s = String(pat || '').toLowerCase();
+      if (s && t.includes(s) && s.length === bestLen) { wp = String(pat); break; }
+    }
+    matchPitfall.lastPattern = wp;
   }
   return best;
 }
@@ -188,7 +208,15 @@ function runEvolution(resultPath) {
               symptom: sig,
               consent: 'granted', // 已脱敏、无原始数据，默认可回传（仍可用 --decline 拒）
               patterns: extractPatterns(ae),
-              fix: inferFix(guessCategory(e), ae, extractPatterns(ae)),
+              // inferFix 必须吃【原文 e】，不能吃脱敏 ae：anonymize 的引号规则 (/["'][^"']{3,}["']/)
+              // 会跨引号吞掉一整段，连带吃掉 inferFix 赖以匹配的关键词。
+              // 实测：eval(document.getElementById('a').classList.contains('on')) = false
+              //   → 脱敏成 getElementById('a<str>on')) = false，'classlist' 分支永不命中
+              //   → 可推断的解法退化成「（待人工补充解法）」。这正是"新坑带空解法入库"的根因。
+              // 安全性：inferFix 每个分支 return 的都是常量文案，只按关键词选择、不拼接入参，
+              //   故传原文不会把被测应用数据带进 fix 字段（fix 会被 contribute 外发）。
+              // patterns 仍取 ae：它是要外发的共享语料，必须保持脱敏。
+              fix: inferFix(guessCategory(e), e, extractPatterns(ae)),
               apps: ['<anon>'], // 脱敏：不含真实项目名
               hits: 1,
               firstSeen: new Date().toISOString().slice(0, 10),
@@ -277,4 +305,4 @@ if (require.main === module) {
   runEvolution(rp);
 }
 
-module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize, extractPatterns, SYN_KEYS };
+module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize, extractPatterns, SYN_KEYS, inferFix, guessCategory };
