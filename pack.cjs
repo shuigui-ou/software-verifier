@@ -9,7 +9,9 @@ const zlib = require('zlib');
 const ROOT = __dirname;
 const OUT = path.resolve(ROOT, '..', 'software-verifier.zip');
 
-const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots', 'contrib']);
+const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots', 'contrib', '.evolution']);
+// vendor 进来的引擎/内核只随包发布运行时代码，不带它们的测试与 fixtures（体积 + 语义噪声）
+const SKIP_VENDOR_DIRS = new Set(['test', 'tests', '__tests__', 'fixtures']);
 const SKIP_FILE = (p) => {
   if (p.endsWith('.log')) return true;
   if (p.endsWith('.gitignore')) return true;
@@ -29,6 +31,7 @@ function walk(dir, base, out) {
     const rel = path.join(base, e.name).split(path.sep).join('/');
     if (e.isDirectory()) {
       if (SKIP.has(e.name)) continue;
+      if (rel.startsWith('software-verifier/lib/') && SKIP_VENDOR_DIRS.has(e.name)) continue;
       walk(full, path.join(base, e.name), out);
     } else {
       if (SKIP_FILE(rel)) continue;
