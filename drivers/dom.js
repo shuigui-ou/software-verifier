@@ -67,6 +67,47 @@ function makeDomDriver(kind, PW_CORE) {
     }).catch(() => {});
   }
 
+  // 遮挡自愈：点击/等待命中"遮罩拦截"时走阶梯 —— ①正常点击 ②清掉遮罩后重试 ③原生 DOM click 兜底。
+  // 只"等待/关闭浮层"，不删除被测页面元素；兜底档记入 heals（报告可见）。
+  // 注：兜底刻意不用 playwright force:true —— 它按坐标派发，事件打在遮罩上，不报错却没点到。
+  const INTERCEPT_RE = /intercepts pointer events|subtree intercepts|not clickable|would receive the click|element is not visible|timeout|exceeded/i;
+  async function dismissOverlays() {
+    try { await page.keyboard.press('Escape'); } catch (_e) { /* ignore */ }
+    try {
+      await page.evaluate(() => {
+        const closers = ['.modal-close', '.el-dialog__headerbtn', '.ant-modal-close', '.close', '[aria-label="Close"]', '[aria-label="关闭"]'];
+        for (const s of closers) { const b = document.querySelector(s); if (b && b.offsetParent) { try { b.click(); } catch (_e) { /* ignore */ } } }
+      });
+    } catch (_e) { /* ignore */ }
+    try {
+      await page.waitForFunction(() => {
+        const masks = [...document.querySelectorAll('.el-loading-mask,.loading-mask,.ant-modal-mask,.v-modal,.modal-mask,.mask,.overlay,.loading')];
+        return masks.every((m) => {
+          const cs = getComputedStyle(m);
+          return cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none' || m.offsetParent === null;
+        });
+      }, { timeout: 2500 });
+    } catch (_e) { /* ignore */ }
+  }
+  async function robustClick(el) {
+    try { await el.click({ timeout: 4000 }); return { ok: true }; }
+    catch (e1) {
+      const msg = String((e1 && e1.message) || e1);
+      if (!INTERCEPT_RE.test(msg)) return { ok: false, err: msg };
+      // 档 2：清掉遮罩后按"真实用户点击"重试
+      await dismissOverlays();
+      try { await el.click({ timeout: 4000 }); return { ok: true, strategy: 'overlay-wait' }; }
+      catch (_e2) {
+        // 档 3：兜底用原生 DOM click —— 绕过命中测试，但"确实触发目标 handler"。
+        // 不用 playwright force:true：它只按坐标派发，事件会打在遮罩上 → 不报错却没点到（静默失效）。
+        try {
+          await el.evaluate((e) => e.click());
+          return { ok: true, strategy: 'dom-click' };
+        } catch (e3) { return { ok: false, err: String((e3 && e3.message) || e3) }; }
+      }
+    }
+  }
+
   async function clickText(text, nth = 0) {
     return await page.evaluate(({ text, nth }) => {
       const norm = (s) => (s || '').trim();
@@ -89,7 +130,20 @@ function makeDomDriver(kind, PW_CORE) {
 
   async function clickSel(sel, nth = 0) {
     const els = await page.$$(sel);
-    if (els[nth]) { await els[nth].click(); return { ok: true, count: els.length }; }
+    if (els[nth]) {
+      const rc = await robustClick(els[nth]);
+      if (rc.ok) {
+        if (rc.strategy) heals.push({ sel, strategy: rc.strategy, ok: true, action: 'click' });
+        return { ok: true, count: els.length, ...(rc.strategy ? { healed: true, strategy: rc.strategy } : {}) };
+      }
+      // 被遮挡/不可点：先自愈找回等价元素再试（遮挡与定位失效常同时出现）
+      if (HEAL_ENABLED) {
+        const h = await healClickSel(page, sel, nth);
+        if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+      }
+      heals.push({ sel, ok: false, action: 'click' });
+      return { ok: false, count: els.length, err: rc.err };
+    }
     // 自愈：原选择器失效时，用稳定信号找回等价元素
     if (HEAL_ENABLED) {
       const h = await healClickSel(page, sel, nth);
@@ -162,6 +216,13 @@ function makeDomDriver(kind, PW_CORE) {
   async function waitSel(sel, timeout) {
     try { await page.waitForSelector(sel, { timeout: timeout || 10000 }); return { ok: true }; }
     catch (e) {
+      // 遮挡自愈：先清掉遮罩再等一次（#submit 之类常被 loading/mask 挡住而"未出现"）
+      await dismissOverlays();
+      try {
+        await page.waitForSelector(sel, { timeout: Math.min(timeout || 10000, 4000) });
+        heals.push({ sel, strategy: 'overlay-wait', ok: true, action: 'wait' });
+        return { ok: true, healed: true, strategy: 'overlay-wait' };
+      } catch (_e2) { /* 继续走定位自愈 */ }
       if (HEAL_ENABLED) {
         const h = await healWaitSel(page, sel, timeout || 10000);
         if (h.ok) { heals.push({ sel, strategy: 'wait-heal', ok: true, action: 'wait' }); return { ok: true, healed: true }; }
