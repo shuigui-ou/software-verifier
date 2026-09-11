@@ -8,7 +8,8 @@
       "is not visible",
       "intercepts pointer events",
       "modal intercepts",
-      "hidden"
+      "hidden",
+      "resolved to hidden"
     ],
     "fix": "先 clickText 打开菜单/展开面板/切到对应 tab，再 clickSel 目标；若仍被遮罩拦截，用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
     "apps": [
@@ -167,7 +168,6 @@
     "category": "选择器精度",
     "symptom": "选择器命中多个元素，报 Strict mode violation: locator resolved to N elements。",
     "patterns": [
-      "resolved to",
       "elements. Strict mode",
       "strict mode violation",
       "strict mode"
@@ -564,9 +564,7 @@
     "patterns": [
       "命中 0 个",
       "waitSel 超时",
-      "!!document.querySelector",
-      "getElementById",
-      "querySelector("
+      "!!document.querySelector"
     ],
     "fix": "元素未出现或等待超时。先确认是否在 overlay / iframe / shadow DOM 内（需切上下文或穿透）；选择器失效时启用自愈 Healer，按 data-testid→aria-label→role+文本 稳定信号找回等价元素；建议给目标元素加 data-testid 提升验证稳定性。",
     "apps": [
@@ -720,5 +718,144 @@
     "consent": "granted",
     "seed": false,
     "dedupFrom": 1
+  },
+  {
+    "id": "dup-process-append-fork",
+    "category": "引擎/环境",
+    "symptom": "两个进程并发 append 同一 append-only JSONL 账本（如 audit 链）：seq 重复、prev 指向同一旧 hash，verify() 报 seq_gap/prev_mismatch 断链。升级/重启服务时旧进程未杀干净最容易触发。",
+    "patterns": [
+      "seq_gap",
+      "prev_mismatch",
+      "duplicate seq",
+      "audit verify false",
+      "链分叉",
+      "seq 重复"
+    ],
+    "fix": "①升级/重启前先确认唯一进程：netstat -ano 找监听 PID 并强制终止旧实例。②账本 append 前重读磁盘链尾（refreshFromDisk）+ wx 锁文件互斥。③数据修复：按内容匹配（ts+type 特征）删孤儿链行、保留按周期连续到最新 seq 的权威链——prev 恰好衔接则无需重算任何 hash。删前备份 .fork-bak。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "stale-port-eaddrinuse",
+    "category": "引擎/环境",
+    "symptom": "重启本机服务（如 node server.js 端口 3000）报 EADDRINUSE :::3000，但任务列表/旧记忆里的 PID 已失效，Get-CimInstance 按旧 PID 查不到。",
+    "patterns": [
+      "EADDRINUSE",
+      "address already in use",
+      "端口被占用",
+      "port in use"
+    ],
+    "fix": "netstat -ano | grep ':PORT.*LISTEN' 直接定位当前占用 PID（不依赖记忆的旧 PID）；PowerShell 用 Get-NetTCPConnection -LocalPort PORT -State Listen 取 OwningProcess；先强制终止旧进程再起新实例。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "staging-doc-overwrite",
+    "category": "引擎/环境",
+    "symptom": "skill 发布 staging 目录的 README.md/SKILL.md 是技能包裁剪版，与仓库开源版是两版文档；全量同步时 cp/git 覆盖会丢掉技能包版内容（死链、宿主语境残留）。",
+    "patterns": [
+      "staging",
+      "覆盖",
+      "README 被覆盖",
+      "技能包版",
+      "manifest 不同步",
+      "staging 落后"
+    ],
+    "fix": "staging 同步脚本排除 README.md/SKILL.md/skillhub.yaml；这三份的版本号/自验测试数/功能简述手工同步（改前先 grep 版本字样）。发布前校验 manifest files 段与磁盘 1:1（差集应只剩 icon.png）。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "sandbox-tunnel-502",
+    "category": "引擎/环境",
+    "symptom": "沙箱内 git push / 外网请求间歇性 CONNECT tunnel failed, response 502——同一会话内前几次成功、之后持续失败，属网络隧道波动而非代码/凭据问题。",
+    "patterns": [
+      "CONNECT tunnel failed",
+      "response 502",
+      "tunnel 502",
+      "push 失败"
+    ],
+    "fix": "失败先重试 2-3 次（间隔 sleep 20）；持续 502 则本地 commit 保留（数据安全）、任务其余部分继续推进、网络恢复后补推。勿反复盲试阻塞任务。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-11",
+    "shared": true
+  },
+  {
+    "id": "win-cross-shell-blocked",
+    "category": "引擎/环境",
+    "symptom": "从 Bash 里调 powershell.exe 或 wmic.exe 被安全策略拦截（Program Blacklist / 跨 shell 防绕过），命令直接 blocked 无法放行。",
+    "patterns": [
+      "blocked by security policy",
+      "Program Blacklist",
+      "Invoking PowerShell from Bash",
+      "wmic"
+    ],
+    "fix": "Windows 会话：PowerShell 操作用原生 PowerShell 工具（不从 Bash 调用）；wmic 已被黑名单，进程/端口查询用 Get-CimInstance（按 ProcessId 精确查）或 netstat -ano。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "gitbash-path-python",
+    "category": "引擎/环境",
+    "symptom": "Git Bash 的 /c/Users/... 路径直接传给 Python 的 open()/json.load 报 FileNotFoundError：Python(Windows) 不识别 MSYS 虚拟路径。",
+    "patterns": [
+      "FileNotFoundError",
+      "/c/Users",
+      "MSYS",
+      "路径转换",
+      "No such file or directory"
+    ],
+    "fix": "Python 脚本内一律用 r\"C:\\...\" Windows 原生路径；或脚本先 os.chdir 到 cwd。shell 层的 ls/cp 可继续用 /c/ 路径，只有进入 Python/Node 参数时才转。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "powershell-empty-output-trap",
+    "category": "引擎/环境",
+    "symptom": "PowerShell 过滤型查询（Get-CimInstance/Get-NetTCPConnection 带过滤条件）无命中时输出为空但 exit code 0——易误判为\"命令失败\"或\"进程不存在\"。",
+    "patterns": [
+      "exit code 0",
+      "输出为空",
+      "empty output",
+      "SilentlyContinue",
+      "误判"
+    ],
+    "fix": "空输出+exit0 = 查询语法执行成功但无命中；用 netstat -ano 交叉验证端口/进程结论，不要凭单一空输出下判断。需要区分\"没查到\"与\"没权限\"时显式 Write-Output 哨兵值。",
+    "apps": [
+      "agent-evolution / ai-novel-studio 工程过程 (2026-09)"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
   }
 ]
