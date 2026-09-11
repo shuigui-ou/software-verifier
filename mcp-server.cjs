@@ -34,9 +34,36 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 
 const SKILL_DIR = __dirname;
-const PW_CORE = process.env.PW_CORE ||
-  'C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node_modules/playwright-core';
-const NODE = process.env.SV_NODE || 'C:/Users/199720.PC2775/.workbuddy/binaries/node/versions/22.22.2/node.exe';
+
+// 自动定位 playwright-core（源码内零硬编码路径）：
+//   env PW_CORE → require.resolve → 与当前 node 同级 / WorkBuddy 托管各版本 / 全局 npm → 明确报错
+function resolvePwCore() {
+  if (process.env.PW_CORE) return process.env.PW_CORE;
+  for (const base of [SKILL_DIR, process.cwd(), path.dirname(process.execPath)].filter(Boolean)) {
+    try { const p = require.resolve('playwright-core', { paths: [base] }); if (p) return p; } catch (e) {}
+  }
+  const cands = [path.join(path.dirname(process.execPath), 'node_modules', 'playwright-core')];
+  try {
+    const binRoot = path.join(os.homedir(), '.workbuddy', 'binaries', 'node', 'versions');
+    for (const v of fs.readdirSync(binRoot)) cands.push(path.join(binRoot, v, 'node_modules', 'playwright-core'));
+  } catch (e) {}
+  try {
+    const out = require('child_process').execSync('npm root -g', { encoding: 'utf8' }).trim().split(/\r?\n/);
+    for (const gr of out) cands.push(path.join(gr, 'playwright-core'));
+  } catch (e) {}
+  for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
+  throw new Error(
+    '[software-verifier] 未找到 playwright-core。请任选其一：\n' +
+    '  (a) 设环境变量 PW_CORE=<node_modules/playwright-core 的绝对路径>\n' +
+    '  (b) 在 skill 目录安装依赖：npm i playwright-core'
+  );
+}
+
+// 自动定位 node：env SV_NODE → 当前正在运行的 node（process.execPath，最可靠）→ PATH 上的 node
+function resolveNode() {
+  if (process.env.SV_NODE) return process.env.SV_NODE;
+  return process.execPath || 'node';
+}
 
 const log = (...a) => process.stderr.write('[mcp] ' + a.join(' ') + '\n');
 
@@ -117,7 +144,7 @@ const TOOLS = [
 
 // ---------- 浏览器会话辅助 ----------
 async function withBrowser(url, fn) {
-  const drv = makeDomDriver('browser', PW_CORE);
+  const drv = makeDomDriver('browser', resolvePwCore());
   let page;
   try {
     const r = await drv.launch({});
@@ -232,7 +259,7 @@ async function handleTool(params, id) {
 
 function runChild(cli) {
   return new Promise((resolve, reject) => {
-    const p = spawn(NODE, cli, { env: Object.assign({}, process.env, { PW_CORE }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(resolveNode(), cli, { env: Object.assign({}, process.env, { PW_CORE: resolvePwCore() }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', er = '';
     p.stdout.on('data', d => out += d);
     p.stderr.on('data', d => er += d);
