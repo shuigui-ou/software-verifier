@@ -101,6 +101,10 @@ let evo = null;
 try { evo = require(SKILL_DIR + '/evolution-host.cjs'); evo.init({ autoStart: false }); }
 catch (_e) { /* 引擎未就绪则完全旁路 */ }
 const evoTap = (e, ctx) => { try { if (evo) evo.tapError(e, ctx); } catch (_e) {} };
+// G/P/I 落差采集（与 evoTap 同构：全部 fail-open，引擎未就绪则静默旁路）
+const evoGap = (title, detail, ctx) => { try { if (evo) evo.tapExpectation(title, detail, ctx || {}); } catch (_e) {} };
+const evoPlan = (title, detail, ctx) => { try { if (evo) evo.tapPlan(title, detail, ctx || {}); } catch (_e) {} };
+const evoHanging = (title, detail, ctx) => { try { if (evo) evo.tapHanging(title, detail, ctx || {}); } catch (_e) {} };
 const evoRun = async () => { try { if (evo) await evo.runCycle(); } catch (_e) {} };
 // 行为闭环：读取侧（引擎复发记忆 + pre_action 已知经验）与执行器（启动前自愈预检）
 const evoSelfHeal = require(SKILL_DIR + '/preflight.cjs');
@@ -201,6 +205,8 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     log('将验证 ' + selected.length + ' / ' + spec.features.length + ' 个功能点\n');
 
     const allHeals = [];
+    // I 类触发：把整次验证当作一条长任务线程（超期未收尾 → 内核 emit I + 落 I 镜像）。正常收尾则闭合，不产 I。
+    const evoThread = (evo && evo.openThread) ? evo.openThread('软件验证全程', spec.name || '', { taskId: 'verify' }) : null;
     for (const f of selected) {
       drv.clearFeatureErrors();
       drv.clearHeals();
@@ -214,7 +220,7 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
         for (const s of (f.steps || [])) {
           const r = await runStep(drv, s);
           frec.steps.push({ do: s.do, text: s.text || s.sel || '', ...r });
-          if (!r.ok) { frec.pass = false; frec.errors.push('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')); log('   ✗ 步骤 ' + s.do + ': ' + (r.err || r.detail || '')); evoTap(new Error('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')), { taskId: 'verify' }); }
+          if (!r.ok) { frec.pass = false; frec.errors.push('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')); log('   ✗ 步骤 ' + s.do + ': ' + (r.err || r.detail || '')); evoTap(new Error('步骤 ' + s.do + ' 失败: ' + (r.err || r.detail || '')), { taskId: 'verify' }); evoPlan('声明步骤未达预期: ' + (s.do || ''), (r.err || r.detail || ''), { taskId: 'verify' }); }
           if (s.screenshot) await drv.screenshot(SHOTS + '/' + s.screenshot).catch(() => {});
         }
         const shot = (f.id + '_' + f.name).replace(/[^\w一-龥]/g, '_') + '.png';
@@ -224,7 +230,7 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
         for (const a of (f.asserts || [])) {
           const ar = await runAssert(drv, a);
           frec.asserts.push({ desc: a.desc || a.sel || a.eval || a.includes || '', ...ar });
-          if (!ar.pass) { frec.pass = false; frec.errors.push('断言失败: ' + ar.detail + hintFor(ar.detail)); evoTap(new Error('断言失败: ' + ar.detail), { taskId: 'verify' }); }
+          if (!ar.pass) { frec.pass = false; frec.errors.push('断言失败: ' + ar.detail + hintFor(ar.detail)); evoTap(new Error('断言失败: ' + ar.detail), { taskId: 'verify' }); evoGap('断言未满足（期望落差）: ' + (a.desc || ar.detail), ar.detail, { taskId: 'verify' }); }
           log('   ' + (ar.pass ? '✓' : '✗') + ' ' + (a.desc || ar.detail));
         }
         const drvErrs = (drv.featureErrors || []).slice();
@@ -262,6 +268,8 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     if (opt.evolve) runEvolution(OUT + '/result.json');
     // 共享进化引擎：把本轮采集到的错误信号跑一轮八步链路（tap 已在各报错点完成），落盘 learnings + 审计。
     await evoRun();
+    // I 类收尾：正常收尾则闭合长任务线程（不产 I 信号）；若整轮超时未到此处，线程超期 → 内核 emit I。
+    if (evoThread && evoThread.ok && evo.closeThread) { try { evo.closeThread(evoThread.threadId || evoThread.ledgerId); } catch (_e) {} }
     // 进化闭环（显性化）：把引擎状态回显出来，避免"学到的经验没人看"。
     try {
       const st = evo ? evo.status() : null;
@@ -273,6 +281,21 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
       if (sen && sen.stale && sen.stale.length) {
         log('⚠ 复发哨兵：' + sen.stale.length + ' 个指纹在"落地后仍复发" → 判定候选无效' + (sen.vetoed ? '（已否决 ' + sen.vetoed + ' 个）' : ''));
         for (const s of sen.stale.slice(0, 5)) log('   • ' + s.fingerprint + ' v' + (s.version || '?') + ' 已落地 ' + (s.landCount || 1) + ' 次、首次落地后仍复发 ' + s.recursAfter + ' 次：' + String(s.title || '').slice(0, 70));
+      }
+    } catch (_e) { /* ignore */ }
+    // 读侧闭环：把 G/P/I 落差 + 外部解法 读回报告（避免只写不读——写进去的经验必须被读出来改变输出）
+    try {
+      const adv = evo ? await evo.advisory() : null;
+      if (adv && adv.ok) {
+        result.evolutionAdvisory = adv;
+        fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
+        writeMarkdown(result, OUT + '/VERIFY-报告.md');
+        writeHtml(result, OUT + '/VERIFY-报告.html');
+        const lines = [];
+        if (adv.open && (adv.open.expectation || adv.open.plan || adv.open.thread)) lines.push('⚠ 未收尾落差：期望落差(G) ' + (adv.open.expectation || 0) + ' / 计划偏离(P) ' + (adv.open.plan || 0) + ' / 长任务(I) ' + (adv.open.thread || 0));
+        if (adv.gaps && (adv.gaps.G || adv.gaps.P || adv.gaps.I)) lines.push('📊 已记录落差信号：G ' + (adv.gaps.G || 0) + ' / P ' + (adv.gaps.P || 0) + ' / I ' + (adv.gaps.I || 0));
+        if (adv.solutions && adv.solutions.length) lines.push('💡 外部解法命中 ' + adv.solutions.length + ' 条（已落地知识面，下次优先匹配）');
+        if (lines.length) { log('🧠 进化提示（读侧闭环）：'); for (const ln of lines) log('   • ' + ln); }
       }
     } catch (_e) { /* ignore */ }
     log('💡 若本次有新踩坑想回馈社区：node contribute.cjs --make（打包后发回维护者合并）');
@@ -311,6 +334,13 @@ function writeMarkdown(r, file) {
     md += `\n## 自愈记录（选择器失效后自动找回等价元素 · 仅修复测试定位，不改软件）\n\n`;
     for (const h of r.heals) md += `- \`${h.sel}\` → 策略 \`${h.strategy || '?'}\` ${h.ok ? '✅ 已恢复' : '❌ 未找到等价元素'}${h.text ? '（' + h.text + '）' : ''}\n`;
   }
+  const a = r.evolutionAdvisory;
+  if (a && ((a.gaps && (a.gaps.G || a.gaps.P || a.gaps.I)) || (a.open && (a.open.expectation || a.open.plan || a.open.thread)) || (a.solutions && a.solutions.length))) {
+    md += `\n## 进化提示（agent-evolution 读侧闭环）\n\n`;
+    if (a.open && (a.open.expectation || a.open.plan || a.open.thread)) md += `- ⚠ 未收尾落差：期望落差(G) ${a.open.expectation || 0} / 计划偏离(P) ${a.open.plan || 0} / 长任务(I) ${a.open.thread || 0}（报告生成前请显式对齐用户预期要点、比对声明步骤与实际轨迹、收尾长任务）\n`;
+    if (a.gaps && (a.gaps.G || a.gaps.P || a.gaps.I)) md += `- 📊 本轮已记录落差信号：G ${a.gaps.G || 0} / P ${a.gaps.P || 0} / I ${a.gaps.I || 0}\n`;
+    if (a.solutions && a.solutions.length) { md += `- 💡 外部解法命中 ${a.solutions.length} 条（已落地知识面）：\n`; for (const s of a.solutions.slice(0, 5)) md += `  - ${s.title}：${s.content}\n`; }
+  }
   fs.writeFileSync(file, md);
 }
 
@@ -326,6 +356,8 @@ function writeHtml(r, file) {
     const shot = f.screenshot ? `<a href="./${f.screenshot}">截图</a>` : '';
     rows += `<tr class="${cls}"><td>${icon}</td><td>${esc(f.id)}</td><td>${esc(f.name)}</td><td>${esc(f.type)}</td><td>${esc(key)}</td><td>${shot}${errs}</td></tr>`;
   }
+  let advHtml = '';
+  { const a = r.evolutionAdvisory; if (a && ((a.gaps && (a.gaps.G || a.gaps.P || a.gaps.I)) || (a.open && (a.open.expectation || a.open.plan || a.open.thread)) || (a.solutions && a.solutions.length))) { const items = []; if (a.open && (a.open.expectation || a.open.plan || a.open.thread)) items.push('未收尾落差：期望落差(G) ' + (a.open.expectation || 0) + ' / 计划偏离(P) ' + (a.open.plan || 0) + ' / 长任务(I) ' + (a.open.thread || 0)); if (a.gaps && (a.gaps.G || a.gaps.P || a.gaps.I)) items.push('本轮已记录落差信号：G ' + (a.gaps.G || 0) + ' / P ' + (a.gaps.P || 0) + ' / I ' + (a.gaps.I || 0)); if (a.solutions && a.solutions.length) items.push('外部解法命中 ' + a.solutions.length + ' 条（已落地知识面）'); advHtml = '<div class="heal"><b>🧠 进化提示（读侧闭环）</b><ul>' + items.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>'; } }
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>验证报告 ${esc(r.name)}</title>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,'Microsoft YaHei',sans-serif;background:#f6f7f9;color:#1c1e21;margin:0;padding:24px}
@@ -348,6 +380,6 @@ a{color:#2f6fed}
 <div class="summary"><b>${r.summary.pass}/${r.summary.total}</b> 通过 · 失败 ${r.summary.fail}</div>
 <table><thead><tr><th>状态</th><th>ID</th><th>功能</th><th>类型</th><th>关键断言</th><th>截图/错误</th></tr></thead><tbody>${rows}</tbody></table>
 ${r.heals && r.heals.length ? `<div class="heal"><b>♻ 自愈 ${r.heals.length} 处</b>：选择器失效后自动用稳定信号找回等价元素（仅修正测试定位，不改被测软件）。<ul>${r.heals.map(h => `<li><code>${esc(h.sel)}</code> → <code>${esc(h.strategy || '?')}</code> ${h.ok ? '✅' : '❌'}${h.text ? '（' + esc(h.text) + '）' : ''}</li>`).join('')}</ul></div>` : ''}
-</body></html>`;
+${advHtml}</body></html>`;
   fs.writeFileSync(file, html);
 }
