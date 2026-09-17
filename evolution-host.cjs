@@ -85,10 +85,14 @@ function ready() {
  */
 function tapError(err, ctx = {}) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
-  const e = err || {};
-  const title = String(e.message || e.code || (typeof err === 'string' ? err : 'unknown error')).slice(0, 300);
-  const detail = String(e.stack || (typeof err === 'string' ? err : JSON.stringify(err))).slice(0, 2000);
-  return engine().tapE({ title, detail, taskId: ctx.taskId || '', source: ctx.source || 'host' });
+  try {
+    const e = err || {};
+    const title = String(e.message || e.code || (typeof err === 'string' ? err : 'unknown error')).slice(0, 300);
+    const detail = String(e.stack || (typeof err === 'string' ? err : JSON.stringify(err))).slice(0, 2000);
+    return engine().tapE({ title, detail, taskId: ctx.taskId || '', source: ctx.source || 'host' });
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
@@ -98,15 +102,19 @@ function tapError(err, ctx = {}) {
  */
 function tapToolResult(res, ctx = {}) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
-  const r = res || {};
-  const failed =
-    r.ok === false ||
-    (typeof r.exitCode === 'number' && r.exitCode !== 0) ||
-    (typeof r.code === 'number' && r.code !== 0) ||
-    (typeof r.stderr === 'string' && r.stderr.trim().length > 0 && r.ok === undefined);
-  if (!failed) return null;
-  const title = String(r.error || r.stderr || r.message || 'tool_result_failure').slice(0, 300);
-  return engine().tapE({ title, detail: String(JSON.stringify(r)).slice(0, 2000), taskId: ctx.taskId || '', source: ctx.source || 'tool' });
+  try {
+    const r = res || {};
+    const failed =
+      r.ok === false ||
+      (typeof r.exitCode === 'number' && r.exitCode !== 0) ||
+      (typeof r.code === 'number' && r.code !== 0) ||
+      (typeof r.stderr === 'string' && r.stderr.trim().length > 0 && r.ok === undefined);
+    if (!failed) return null;
+    const title = String(r.error || r.stderr || r.message || 'tool_result_failure').slice(0, 300);
+    return engine().tapE({ title, detail: String(JSON.stringify(r)).slice(0, 2000), taskId: ctx.taskId || '', source: ctx.source || 'tool' });
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
@@ -115,7 +123,11 @@ function tapToolResult(res, ctx = {}) {
  */
 function tapExpectation(title, detail = '', ctx = {}) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
-  return engine().tapExpectation({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  try {
+    return engine().tapExpectation({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
@@ -124,7 +136,11 @@ function tapExpectation(title, detail = '', ctx = {}) {
  */
 function tapPlan(title, detail = '', ctx = {}) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
-  return engine().tapPlan({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  try {
+    return engine().tapPlan({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
@@ -133,7 +149,11 @@ function tapPlan(title, detail = '', ctx = {}) {
  */
 function tapHanging(title, detail = '', ctx = {}) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
-  return engine().tapHanging({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  try {
+    return engine().tapHanging({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /** 长任务开始：开 thread 账本（超期未闭合 → 内核 emit I + 落 I 镜像） */
