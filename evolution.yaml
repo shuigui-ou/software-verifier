@@ -43,3 +43,13 @@ objectives:
   - title: 压制验证失败复现率（同一失败模式不再反复出现）
     types: [E]
     weight: 5
+  # 两条腿并行：除"做不下去"(E) 外，也要认识"做不到位/可更好"的落差，并据此进化
+  - title: 认识并收敛期望落差（用户要点未满足/显式纠错/对账不符）
+    types: [G]
+    weight: 4
+  - title: 收敛计划偏离（声明步骤 vs 实际执行轨迹）
+    types: [P]
+    weight: 3
+  - title: 收敛悬挂未完结（open 承诺超期未收尾）
+    types: [I]
+    weight: 3
