@@ -80,42 +80,55 @@ function guessCategory(err) {
   return '未知';
 }
 // 抓坑即推断默认解法：新坑出生即带可用提示，避免"待人工补充解法"废提示。
-// 复用 SYN_KEYS 信号词做检测；全不命中才兜底"待补充"。只写解法文本到 pitfalls.json，不动被测软件。
+// 【声明式分支表 v1.2.7】inferFix 与领域闸（evolution-candidate-gen.cjs）共用这一个来源：
+//   - keywords：推断召回用（宽，宁多勿漏）
+//   - gate：    闸门精度用（窄，宁缺勿滥）。**省略时 = keywords**。
+//     为什么不直接用 keywords 当闸：部分 keywords 措辞过泛（裸 "reading '" 对宿主侧
+//     `Cannot read properties of undefined (reading 'map')` 同样成立；'class' 会命中
+//     `Class constructor ... cannot be invoked without 'new'`），直接当闸会让宿主工具链
+//     错误漏进 DOM 解法（实测踩坑：错解法入库比不学更糟）。
+//   ⇒ **往表里加一个分支 = 推断能力与闸同步扩展**（不写 gate 时），两处不再各自硬编码漂移。
+// 契约：按序匹配（keywords 任一子串命中即返回该分支 fix）；全不命中才兜底"待补充"。
+// 只写解法文本到 pitfalls.json，不动被测软件。
+const FIX_BRANCHES = [
+  { keywords: ['cannot read properties of null'], gate: ['cannot read properties of null'],
+    fix: 'eval 拿到 null 元素仍访问属性。先 !!document.querySelector(sel) 判空再读 .width/.textContent 等；元素未挂载时先等待再断言。' },
+  // gate: [] = 此分支不打开闸（"X is not defined" 宿主/页面两侧同形，引擎侧宁可不学）；
+  // 宿主 runEvolution 路径不经闸，仍按 keywords 推断。
+  { keywords: ['is not defined', 'referenceerror'], gate: [],
+    fix: 'eval 引用了页面作用域不存在的变量（组件内部状态）。validate 的 eval 不应读取框架内部变量名（常未挂到 window）。改为用稳定 DOM 信号（data-testid/text/role/classList）表达断言。' },
+  { keywords: ['intercepts', 'not clickable', 'pointer events'], gate: ['intercepts', 'pointer events', 'clickable'],
+    fix: '点击被遮罩拦截。先关闭/等待遮罩（loading/弹窗/tooltip）消失再点击；顽固遮罩用 exec 在页面内 el.click() 绕过行动性检查。' },
+  { keywords: ['iframe', 'shadow', 'detached'], gate: ['iframe', 'shadow', 'detached'],
+    fix: '元素在 iframe / shadow DOM / 已 detached。需切到对应 frame 上下文或穿透 shadow root 再定位。' },
+  { keywords: ['classlist', 'class'], gate: ['classlist', 'classname'],
+    fix: '类名/显隐断言失败。类名若是 CSS Module 哈希（如 _abc123）会随机变化→用 data-testid 或稳定业务 class；确认元素是否被 v-if 条件渲染移除（getElementById 返回 null）；显隐优先用 :visible / aria-hidden。' },
+  { keywords: ['queryselectorall', 'length'], gate: ['queryselectorall', 'queryselector'],
+    fix: '列表项数量不符。确认数据是否已加载完（分页/懒加载/动画），必要时等待后再数；区分「恰好 N」与「至少 N」；数量变化属预期时改用 >= 阈值。' },
+  { keywords: ['textcontent', 'includes', 'indexof'], gate: ['textcontent'],
+    fix: '文本断言未命中。可能异步渲染→先 waitSel/轮询；含不可见字符或大小写差异→断言 trim()+toLowerCase()；先断言元素存在再比文本。' },
+  // 可见性/显隐：纯 DOM 域词（宿主工具链错误不会说 "is not visible"），但 inferFix 原先无分支
+  // —— 当初硬编码闸靠 'visible'/'hidden' 放行它去走「已知坑」检查。移到表里：既恢复闸放行，
+  // 又真正补全 inferFix（原先这类错误只能拿占位解法）。gate 省略 → 与 keywords 同宽。
+  { keywords: ['hidden', 'visible', 'invisible', 'not visible'], gate: ['hidden', 'visible', 'invisible'],
+    fix: '显隐/可见性断言失败。元素可能被 v-if / 条件渲染移除或尚未挂载→断言前先等待其出现；优先用 :visible / aria-hidden 判定而非读取尺寸；父级 display:none / overflow:hidden / 动画中也会使元素不可见（先展开容器/切 tab 再点）。' },
+  { keywords: ['clicktext'], gate: ['clicktext'],
+    fix: 'clickText 未找到可点击文本。文本可能在 overlay / 动画后出现、或被截断；改用 clickSel + 稳定选择器；确认元素可点击（未被 pointer-events:none 遮罩拦截，见 seed-overlay-intercept）。' },
+  { keywords: ['timeout', 'waiting for', 'stable', 'not found', '超时', 'waitsel', 'waitSel', '命中 0 个'],
+    gate: ['waiting for', 'timeout', 'timed out', 'stable', '超时', 'waitsel', '命中 0 个'],
+    fix: '元素未出现或等待超时。调大 waitSel 超时阈值；元素可能异步渲染/动画后才挂载，先等待再断言；确认是否在 overlay/iframe/shadow DOM 内（需切上下文或穿透）。' },
+  { keywords: ['步骤 ai 失败', 'ai 失败'], gate: ['步骤 ai 失败', 'ai 失败'],
+    fix: 'AI 步骤失败。检查 LLM token 是否过期/超额；网络抖动重试；确认输入上下文是否过长触发截断。' },
+];
+const FIX_PLACEHOLDER = '（待人工补充解法）— 首次出现，请在 evolution/pitfalls.json 补充可复用解法。';
 function inferFix(category, ae, patterns) {
   const t = String(ae || '').toLowerCase();
-  const has = (...keys) => keys.some(k => t.includes(k));
-  if (has('cannot read properties of null', "reading '")) {
-    return 'eval 拿到 null 元素仍访问属性。先 !!document.querySelector(sel) 判空再读 .width/.textContent 等；元素未挂载时先等待再断言。';
+  for (const b of FIX_BRANCHES) {
+    for (const k of b.keywords) {
+      if (t.includes(String(k).toLowerCase())) return b.fix;
+    }
   }
-  if (has('is not defined', 'referenceerror')) {
-    return 'eval 引用了页面作用域不存在的变量（组件内部状态）。validate 的 eval 不应读取框架内部变量名（常未挂到 window）。改为用稳定 DOM 信号（data-testid/text/role/classList）表达断言。';
-  }
-  if (has('intercepts', 'not clickable', 'pointer events')) {
-    return '点击被遮罩拦截。先关闭/等待遮罩（loading/弹窗/tooltip）消失再点击；顽固遮罩用 exec 在页面内 el.click() 绕过行动性检查。';
-  }
-  if (has('iframe', 'shadow', 'detached')) {
-    return '元素在 iframe / shadow DOM / 已 detached。需切到对应 frame 上下文或穿透 shadow root 再定位。';
-  }
-  if (has('classlist', 'class')) {
-    return '类名/显隐断言失败。类名若是 CSS Module 哈希（如 _abc123）会随机变化→用 data-testid 或稳定业务 class；确认元素是否被 v-if 条件渲染移除（getElementById 返回 null）；显隐优先用 :visible / aria-hidden。';
-  }
-  if (has('queryselectorall', 'length')) {
-    return '列表项数量不符。确认数据是否已加载完（分页/懒加载/动画），必要时等待后再数；区分「恰好 N」与「至少 N」；数量变化属预期时改用 >= 阈值。';
-  }
-  if (has('textcontent', 'includes', 'indexof')) {
-    return '文本断言未命中。可能异步渲染→先 waitSel/轮询；含不可见字符或大小写差异→断言 trim()+toLowerCase()；先断言元素存在再比文本。';
-  }
-  if (has('clicktext')) {
-    return 'clickText 未找到可点击文本。文本可能在 overlay / 动画后出现、或被截断；改用 clickSel + 稳定选择器；确认元素可点击（未被 pointer-events:none 遮罩拦截，见 seed-overlay-intercept）。';
-  }
-  if (has('timeout', 'waiting for', 'stable', 'not found', '超时', 'waitsel', 'waitSel', '命中 0 个')) {
-    return '元素未出现或等待超时。调大 waitSel 超时阈值；元素可能异步渲染/动画后才挂载，先等待再断言；确认是否在 overlay/iframe/shadow DOM 内（需切上下文或穿透）。';
-  }
-  if (has('步骤 ai 失败', 'ai 失败')) {
-    return 'AI 步骤失败。检查 LLM token 是否过期/超额；网络抖动重试；确认输入上下文是否过长触发截断。';
-  }
-  // 兜底：信号词全不命中时才留"待补充"
-  return '（待人工补充解法）— 首次出现，请在 evolution/pitfalls.json 补充可复用解法。';
+  return FIX_PLACEHOLDER;
 }
 function esc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 // 同义归一表：把同类报错的不同措辞映射到同一组关键词，扩大自动坑的泛化面。
@@ -305,4 +318,4 @@ if (require.main === module) {
   runEvolution(rp);
 }
 
-module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize, extractPatterns, SYN_KEYS, inferFix, guessCategory };
+module.exports = { runEvolution, loadPitfalls, matchPitfall, writeEvolutionMd, anonymize, extractPatterns, SYN_KEYS, inferFix, guessCategory, FIX_BRANCHES, FIX_PLACEHOLDER };
