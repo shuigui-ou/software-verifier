@@ -9,15 +9,16 @@ const zlib = require('zlib');
 const ROOT = __dirname;
 const OUT = path.resolve(ROOT, '..', 'software-verifier.zip');
 
-// 目录级排除：运行时产物 + dev 侧学习装置。
-// lib/ 与 seeds/ 是 agent-evolution 引擎（dev 侧学习装置，只在本机跑）：verify.cjs:101 对
-// evolution-host.cjs 是 fail-open require（try/catch），缺了它 evo=null、全部调用安全 no-op。
-// 引擎对用户产品零输出——其产物 learnings.jsonl / evolution.md 本就被下面排除，
-// 真正随包发布的知识是人工维护的 evolution/pitfalls.json。
-// 注意：preflight.cjs 是 verify.cjs:106 的【无保护】顶层 require（端口/网络预检自愈），必须保留在包内。
+// 目录级排除：运行时产物 + 第三方/构建产物。
+// v1.4.0 / B 决策：agent-evolution 引擎(lib/) + 宿主接入层(evolution-host.cjs / tap-helpers.cjs /
+// evolution-candidate-gen.cjs) 现在【随包发布】，使 SkillHub 公开包也能跑读侧闭环——
+// verify.cjs 经 evo.advisory() 读回 G/P/I 落差 + external 解法，在报告回显「进化提示」段。
+// 三文件均含 fail-open 守卫（缺任一则 evo=null，调用安全 no-op），公开包用户也能享受到闭环。
+// lib/ 内仅发布运行时代码：其 test/ fixtures 由 SKIP_VENDOR_DIRS 排除，不进市场包（减体积+去语义噪声）。
+// 注意：preflight.cjs 是 verify.cjs 的【无保护】顶层 require（端口/网络预检自愈），必须保留在包内。
 const SKIP = new Set(['node_modules', '.git', 'verify_report', 'shots', 'contrib', '.evolution',
-  'lib',     // 引擎 + 内核（含测试，整目录不发布）
-  'seeds',   // 引擎种子（仅引擎消费）
+  // 'lib' 已移除：v1.4.0 起引擎随包发布（B 决策）
+  'seeds',   // 引擎种子（仅引擎消费；公开包不含，引擎缺 seeds 自动回落内置匹配器，fail-open）
 ]);
 // vendor 进来的引擎/内核只随包发布运行时代码，不带它们的测试与 fixtures（体积 + 语义噪声）
 // （lib 整目录已排除，此规则保留作兜底：若将来只排除部分 vendor 目录仍生效）
@@ -30,10 +31,8 @@ const SKIP_FILE = (p) => {
   // 回流本地状态不随 skill 包发布
   if (p.endsWith('evolution/last-evolution.json')) return true;
   if (p.endsWith('evolution/contrib-ledger.json')) return true;
-  // dev 侧学习装置单文件（verify.cjs 对 evolution-host fail-open；preflight.cjs 不在此列——运行时依赖）
-  if (p.endsWith('/evolution-candidate-gen.cjs')) return true;
-  if (p.endsWith('/evolution-host.cjs')) return true;
-  if (p.endsWith('/tap-helpers.cjs')) return true;
+  // dev 侧学习装置单文件 — v1.4.0 起【随包发布】（B 决策）：读侧闭环对所有渠道用户生效。
+  // 三文件均含 fail-open 守卫，缺任一仍安全降级；引擎自带说明文档不进市场包。
   if (p.endsWith('/EVOLUTION.md')) return true;
   // SkillHub 上传包禁止二进制文件，图标需单独在表单「图标」处上传
   if (/\.(png|jpe?g|gif|ico|webp|bmp)$/i.test(p)) return true;
