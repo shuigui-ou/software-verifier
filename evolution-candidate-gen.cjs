@@ -25,29 +25,24 @@
 
 const path = require('node:path');
 
-// inferFix 兜底文案（evolve.cjs:98）里的特征串：命中即视为「没推断出真解法」
+// inferFix 兜底文案特征串：命中即视为「没推断出真解法」。运行时首选 evolve.cjs 导出的
+// FIX_PLACEHOLDER（单一事实源），此常量仅作 evolve.cjs 未导出时的兜底。
 const PLACEHOLDER = '待人工补充解法';
 
 // 领域闸（A 方案的必要条件）。inferFix/guessCategory 的能力域 = 浏览器/DOM 验证类错误，
 // 而宿主工具链错误的措辞与之高度同形（例：not found 既指 selector 未出现、也指依赖路径缺失），
 // 直接套用会产出「看似合理但错误」的解法 —— 写进知识面比不写更糟。
 // 故：带工具链特征 → 不产候选；不带验证域特征 → 不产候选；两者皆无歧义才产候选。
-const DOMAIN_MARKERS = [
-  // 注意：不要加入裸 "reading '"——它对 Node 侧 TypeError 同样成立。
-  // 实测漏网："Cannot read properties of undefined (reading 'map')"（宿主崩溃）会通过闸门，
-  // 并被塞进「页面 eval 空元素」的 DOM 解法 → 错解法入库。故只保留带 null 的完整形态
-  // （Playwright 的 page.evaluate 报错本身就是 "Cannot read properties of null (reading 'x')"）。
-  'cannot read properties of null',
-  'intercepts', 'pointer events', 'not clickable', 'clickable',
-  'locator', 'selector', 'data-act', 'data-testid', 'nth',
-  'waiting for', 'timeout', 'timed out', 'stable', '超时',
-  'waitsel', 'waittext', 'clicktext', 'clicksel', '命中 0 个',
-  'iframe', 'frame', 'shadow', 'detached',
-  'classlist', 'queryselector', 'textcontent', 'includes', 'indexof',
-  'visible', 'hidden', 'evaluate', 'eval(', 'assert',
-  '步骤 ai 失败', 'ai 失败',
-];
-// 工具链特征：命中即判定为宿主环境错误，不属于 inferFix 能力域
+//
+// 【v1.2.7 单一事实源】DOMAIN_MARKERS 不再硬编码：由 evolve.cjs 的 FIX_BRANCHES[].gate
+// （省略 gate 时 = keywords）在 loadInference() 内派生 —— 往表里加一个分支，闸自动同步扩展
+// （"会不会自动开"在机制上成立，不再依赖人工记得改两处）。设计细节：
+//   - 派生放 loadInference() 而非模块顶层：保住「evolve.cjs 加载失败时本文件仍可被 require」的弹性；
+//   - 旧硬编码清单中不 backed by 任何分支的词（locator/selector/data-testid/eval(/assert/
+//     visible/hidden/frame/includes/indexof 等）已随之移除：它们只负责放行文本，inferFix
+//     无分支可匹配时最终仍死于 placeholder 检查 —— 属死权重，只会把 lastReason 从
+//     blocked:out-of-domain 误标成 no-inference(placeholder)；
+//   - 'not clickable' 由 'clickable' 子串覆盖，无召回损失。
 const HOST_TOOLCHAIN = [
   'enoent', 'eaddrinuse', 'module_not_found', 'cannot find module', 'eacces',
   'spawn', 'command not found', 'playwright-core', 'npm err', 'no such file',
@@ -69,6 +64,11 @@ function loadInference() {
     anonymize: typeof m.anonymize === 'function' ? m.anonymize : (s) => String(s || ''),
     matchPitfall: typeof m.matchPitfall === 'function' ? m.matchPitfall : () => null,
     loadPitfalls: typeof m.loadPitfalls === 'function' ? m.loadPitfalls : () => [],
+    // 领域闸清单：由 FIX_BRANCHES[].gate（省略时 = keywords）派生，单一事实源（见文件头注释）。
+    domainMarkers: Array.isArray(m.FIX_BRANCHES)
+      ? [...new Set(m.FIX_BRANCHES.flatMap((b) => (Array.isArray(b.gate) ? b.gate : (b.keywords || []))).filter(Boolean))]
+      : [],
+    placeholder: typeof m.FIX_PLACEHOLDER === 'string' && m.FIX_PLACEHOLDER ? m.FIX_PLACEHOLDER : PLACEHOLDER,
   };
 }
 
@@ -93,7 +93,7 @@ async function generate(group) {
     const raw = String(group.title || '').trim();
     if (!raw) { lastReason = 'skipped:empty'; return out; }
 
-    const { guessCategory, extractPatterns, inferFix, anonymize, matchPitfall, loadPitfalls } = loadInference();
+    const { guessCategory, extractPatterns, inferFix, anonymize, matchPitfall, loadPitfalls, domainMarkers, placeholder } = loadInference();
 
     // 关键：领域判定与推断都基于【原文】raw，不能用脱敏后的文本。
     // 实测踩坑：anonymize 会把 inferFix 赖以匹配的关键词一起抹掉
@@ -101,7 +101,7 @@ async function generate(group) {
     // 故 raw 只用于「判断 + 推断」，ae 用于「落盘内容 / 共享语料」。
     const lower = raw.toLowerCase();
     if (HOST_TOOLCHAIN.some((k) => lower.indexOf(k) >= 0)) { lastReason = 'blocked:host-toolchain'; return out; }
-    if (!DOMAIN_MARKERS.some((k) => lower.indexOf(k) >= 0)) { lastReason = 'blocked:out-of-domain'; return out; }
+    if (!domainMarkers.some((k) => lower.indexOf(String(k).toLowerCase()) >= 0)) { lastReason = 'blocked:out-of-domain'; return out; }
 
     const ae = String(anonymize(raw));          // 落盘用：与宿主坑库同一套脱敏口径
 
@@ -119,7 +119,7 @@ async function generate(group) {
     const fix = String(inferFix(category, raw, patterns) || '');
 
     // 质量闸：占位解法不入库
-    if (!fix || fix.indexOf(PLACEHOLDER) >= 0) { lastReason = 'no-inference(placeholder)'; return out; }
+    if (!fix || fix.indexOf(placeholder) >= 0 || fix.indexOf(PLACEHOLDER) >= 0) { lastReason = 'no-inference(placeholder)'; return out; }
 
     out.push({
       title: '推断解法：' + (category || '未分类') + ' — ' + ae.slice(0, 60),
