@@ -78,3 +78,37 @@ node verify.cjs --spec your-spec.json --url http://localhost:3000 --ui-only
 - **Topics / About**：仓库首页右上角 ⚙（About 旁的齿轮）
 - **Release**：仓库首页 → 右侧 `Releases` → `Draft a new release`
 - **打 Tag**：Release 页面 Tag 下拉填 `v1.0.0` 并选 `master` 作为 target
+
+---
+
+## 6. 无 git 通道：`gh api` 内容接口直传（GFW 环境首选）
+
+本机 `git push` 到 github.com 可能被阻断，且可能缺 Git for Windows。可行替代：用 `gh api` 的 contents 接口逐文件上传（`gh auth login` 后即可）。推荐直接跑本仓库配套脚本 **`../gh_publish_sv.py`**（幂等：仓库已存在则跳过建仓、文件已存在则取 sha 后更新）。
+
+### ⚠️ 关键坑：大文件不能用 `-f content=<base64>`
+
+`gh api -X PUT ... -f content=<b64>` 会把整段 base64 放进命令行参数，**超过 Windows 命令行长度上限（约 32KB）即失败**——一个 500KB 的 PNG base64 后约 700KB，必挂。
+
+正确做法：把请求体写成临时 JSON 文件，用 `--input` 传：
+
+```bash
+# body.json = {"message":"add icon.png","content":"<base64>","sha":"<若已存在>"}
+gh api -X PUT repos/OWNER/REPO/contents/icon.png --input body.json
+```
+
+`gh_publish_sv.py` 已按此实现（每个文件一个临时 body，用完即删）。
+
+### Release / Topics 也走 API（免网页）
+
+```bash
+gh release create v1.3.0 --repo OWNER/REPO --title "v1.3.0 · <标题>" --notes-file NOTES.md
+gh api -X PUT repos/OWNER/REPO/topics -H "Accept: application/vnd.github.mercy-preview+json" \
+  -f names[]=software-testing -f names[]=automation ...
+```
+
+### 校验（上传后务必核对，别只看"上传成功"）
+
+```bash
+gh api repos/OWNER/REPO --jq '.full_name+" | default_branch="+.default_branch'
+gh api repos/OWNER/REPO/contents/SKILL.md --jq '.content'   # base64 解码后确认 version 正确
+```
