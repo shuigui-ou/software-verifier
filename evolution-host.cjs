@@ -109,6 +109,45 @@ function tapToolResult(res, ctx = {}) {
   return engine().tapE({ title, detail: String(JSON.stringify(r)).slice(0, 2000), taskId: ctx.taskId || '', source: ctx.source || 'tool' });
 }
 
+/**
+ * G 类 tap：期望落差（用户要点未满足 / 显式纠错 / 报告与预期不符 / 断言 FAIL 但被人工判可接受）。
+ * 转发到引擎 tapExpectation（写 expectation 账本 + 落 G 信号镜像）。
+ */
+function tapExpectation(title, detail = '', ctx = {}) {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  return engine().tapExpectation({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+}
+
+/**
+ * P 类 tap：计划偏离（声明步骤 vs 实际执行轨迹）。
+ * 转发到引擎 tapPlan（写 plan 账本 + 落 P 信号镜像）。
+ */
+function tapPlan(title, detail = '', ctx = {}) {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  return engine().tapPlan({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+}
+
+/**
+ * I 类 tap：悬挂未完结（open 承诺超期；默认人审）。
+ * 转发到引擎 tapHanging（写 thread 账本 + 落 I 信号镜像）。
+ */
+function tapHanging(title, detail = '', ctx = {}) {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  return engine().tapHanging({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs, source: ctx.source || 'host' });
+}
+
+/** 长任务开始：开 thread 账本（超期未闭合 → 内核 emit I + 落 I 镜像） */
+function openThread(title, detail = '', ctx = {}) {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  return engine().openThread({ title: String(title), detail: String(detail || ''), taskId: ctx.taskId || '', ttlMs: ctx.ttlMs });
+}
+
+/** 长任务结束：闭合 thread 账本（在 ttlMs 内收尾则正常闭合，不产出 I 信号） */
+function closeThread(threadId, outcome) {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  return engine().closeThread(threadId, outcome || null);
+}
+
 /** 启动周期自动分析（内核 analyze 调度；依赖 yaml 的 analyze.intervalMs 或 autoStartMs） */
 function start(intervalMs) {
   if (!ready()) return { ok: false, reason: 'not_ready' };
@@ -149,6 +188,70 @@ function tapBehavior(input) {
 function status() {
   if (!_engine) return { ok: false, reason: 'not_initialized' };
   return engine().status();
+}
+
+/**
+ * 读侧闭环：把 G/P/I 落差 + 外部解法 读回来，供宿主回显/改行为（避免只写不读）。
+ * 数据源与引擎写入同源：signals.jsonl（落差信号镜像）/ status（未收尾账本）/ reports.jsonl（落地面）+ 资源层（外部解法）。
+ * @returns {{ok:boolean, gaps:{G:number,P:number,I:number}, open:{expectation:number,plan:number,thread:number}, solutions:Array<{fingerprint:string,title:string,content:string}>}} 未就绪/异常返回 {ok:false}
+ */
+async function advisory() {
+  if (!ready()) return { ok: false, reason: 'not_ready' };
+  try {
+    const st = engine().status();
+    const dir = st && st.dataDir ? st.dataDir : '';
+    const gaps = { G: 0, P: 0, I: 0 };
+    const sigFile = dir ? path.join(dir, 'signals', 'signals.jsonl') : '';
+    if (sigFile && fs.existsSync(sigFile)) {
+      for (const line of fs.readFileSync(sigFile, 'utf8').split(/\r?\n/)) {
+        const t = line.trim(); if (!t) continue;
+        let r; try { r = JSON.parse(t); } catch (_e) { continue; }
+        if (r && gaps[r.type] !== undefined) gaps[r.type] += 1;
+      }
+    }
+    const open = {
+      expectation: (st && st.expectationGaps) || 0,
+      plan: (st && st.planDeviations) || 0,
+      thread: (st && st.openThreads) || 0,
+    };
+    const solutions = [];
+    const seen = new Set();
+    const res = (engine().state && engine().state().resources) || null;
+    if (res && typeof res.querySolutions === 'function' && dir) {
+      const fps = new Set();
+      const repFile = path.join(dir, 'reports', 'reports.jsonl');
+      if (fs.existsSync(repFile)) {
+        const lines = fs.readFileSync(repFile, 'utf8').trim().split(/\r?\n/).filter(Boolean);
+        const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+        if (last && Array.isArray(last.decisions)) {
+          for (const d of last.decisions) {
+            if (!d || (d.action !== 'land' && d.action !== 'land_report') || !d.fingerprint) continue;
+            fps.add(d.fingerprint);
+          }
+        }
+      }
+      const sigFile = path.join(dir, 'signals', 'signals.jsonl');
+      if (fs.existsSync(sigFile)) {
+        for (const line of fs.readFileSync(sigFile, 'utf8').split(/\r?\n/)) {
+          const t = line.trim(); if (!t) continue;
+          let r; try { r = JSON.parse(t); } catch (_e) { continue; }
+          if (r && r.fingerprint) fps.add(r.fingerprint);
+        }
+      }
+      for (const fp of fps) {
+        const hits = await res.querySolutions({ fingerprint: fp }) || [];
+        for (const h of hits) {
+          const key = fp + '\u0001' + (h.title || '');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          solutions.push({ fingerprint: fp, title: h.title || '', content: h.content || '' });
+        }
+      }
+    }
+    return { ok: true, gaps, open, solutions };
+  } catch (_e) {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
@@ -295,6 +398,11 @@ module.exports = {
   ready,
   tapError,
   tapToolResult,
+  tapExpectation,
+  tapPlan,
+  tapHanging,
+  openThread,
+  closeThread,
   start,
   stop,
   runCycle,
@@ -302,6 +410,7 @@ module.exports = {
   checkpoint,
   tapBehavior,
   status,
+  advisory,
   recurringErrors,
   preActionGate,
   reportOutcome,
