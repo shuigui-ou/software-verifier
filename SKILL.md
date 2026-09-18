@@ -20,6 +20,13 @@ pricing: 免费
 icon: icon.png
 ---
 
+## ⚠️ 风险分级与污染审阅（Governance）
+
+- **风险等级 L1**：仅本机自动化 + 本地写报告/进化账本；不触外部账号、不涉资金/订单。所有写动作 **fail-open**——进化引擎未就绪或写失败即返回 `{ok:false}`，绝不阻断验证主流程。
+- **持久化污染风险（明示）**：进化账本（`evolution/pitfalls.json`、`learnings.jsonl`、`signals.jsonl`、`reports.jsonl`）是**长期累积**的本地状态，可能被错误结论固化；尤其自动推断的解法在被裁决 `land` 前只是"建议"，不应被当作事实。
+- **污染防护（已实做）**：① 写入即脱敏——`evolve.cjs` 剥离 URL/路径/引号串/被测软件名，坑库只存失败模式，绝不含原始数据；② 回流需同意——`evolution/contrib.json` 的 `mode` = `ask`(默认)/`always`/`never`，打包出的 bundle 不自动上传；③ 空转自检——`recurrenceSentinel` 判定"被反复 land 仍复发"的候选无效并回写否决，防错误候选被反复采纳。
+- **定期审阅 SOP**：每次大版本发布前，或 `learnings.jsonl` 行数 ≥ 200 时，人工过一遍 `pitfalls.json` 与最近 `learnings.jsonl`，删除/修正已过时或被证伪条目；`evo.recurringErrors()` 可列复发指纹辅助复核。
+
 # software-verifier · 软件功能全量验证器
 
 读一份说明书（或你自己列的清单），转成结构化 spec，用本机无头 Edge **像真人一样**打开软件、逐个点按钮/填表/触发功能、截图、抓报错、断言预期，最后产出带 ✅/❌ 表格、截图和错误日志的报告（Markdown + HTML）。引擎与软件**解耦**：换软件只换 spec。
@@ -117,7 +124,8 @@ icon: icon.png
 
 把本 skill 包成 MCP server，**别的 agent / 别的 skill** 可直接调用验证工具，不必加载整份 skill 指令：
 
-- 暴露工具：`verify_run` / `browser_run` / `heal_selector` / `visual_capture` / `visual_diff`（完整 schema 见 `mcp-server.cjs` 头部）。
+- 暴露工具：`verify_run` / `verify_skill` / `browser_run` / `heal_selector` / `visual_capture` / `visual_diff` / `verify_mcp`（完整 schema 见 `mcp-server.cjs` 头部）。
+- 报告即资源：每次 `verify_run`/`verify_skill` 后，最新报告可通过 MCP `resources/list` + `resources/read` 订阅，URI 为 `software-verifier://report/latest`（result.json）与 `software-verifier://report/latest.md`（VERIFY-报告.md）；`initialize` 已声明 `resources` 能力。
 - 注册：在 `~/.workbuddy/mcp.json` 的 `mcpServers` 加 `software-verifier`，`command` 指向本机 node，`args` 指向本 skill 的 `mcp-server.cjs`，`env` 设 `PW_CORE`。
 - 零依赖：原生 Node stdio JSON-RPC 实现，无需 `@modelcontextprotocol/sdk`。日志走 stderr，不污染协议流。
 
@@ -159,6 +167,7 @@ software-verifier 不只「被调用」，还能**作为 MCP client 去检查另
 - **断言表达式来源可信**：`assertEval`/`exec`/`getBusyDone` 运行的 JS 表达式**仅来自你本地编写的 spec 文件**（说明书），属 by-design 的可信输入；执行前经 `drivers/safe-expr.cjs` 黑名单校验，拦截 `require`/`process`/`child_process`/`fs`/`eval`/`Function`/`constructor`/`__proto__`/`globalThis`/`fetch` 等危险标识符，防止任意代码执行。
 - **路径经环境变量覆盖（无硬编码绑定）**：`playwright-core` 路径读 `process.env.PW_CORE`、`Node` 路径读 `process.env.SV_NODE`，均 `env || 开发机默认兜底`——部署到任意机器只需设环境变量，无需改代码。
 - **零依赖、不传云端**：全程本机运行，spec 与结果不上传第三方；自进化知识库仅存本地 `evolution/`。
+- **网络访问需显式 opt-in**：`api`/`openapi` 步骤与断言默认关闭，必须由 `verify.cjs --allow-api`、spec 顶层 `allowApi:true`、或 MCP `verify_skill`/`browser_run` 的 `allowApi` 入参开启——避免 spec 暗地发起请求；`assertEval`/`exec` 内的 `fetch` 仍被 `drivers/safe-expr.cjs` 黑名单拦截（两层独立）。
 
 ## 驱动对照
 
@@ -182,6 +191,8 @@ software-verifier 不只「被调用」，还能**作为 MCP client 去检查另
    - 全量含 AI：`node verify.cjs --spec s.json --url http://localhost:3000 --ai on`
    - 仅界面（零额度）：`node verify.cjs --spec s.json --url http://localhost:3000 --ui-only`
    - 勾选：`--only F01,F04` 或 `--ui-only --also F04,F16`
+  - 接口/网络验证（需显式开启）：`node verify.cjs --spec s.json --url http://x --allow-api`（启用 `api`/`openapi` 步骤与断言；默认关闭，引擎层拦截未授权网络访问）
+  - 直接验证某个 skill：`node verify.cjs --skill <skill目录> --url http://x`（自动定位该目录下的 `verify-spec.json`/`spec.json` 跑完整验证）
 7. **看报告**：`verify_report/VERIFY-报告.html`（含截图+已知坑提示）+ `.md` + `result.json`。报告产出即停止。
 
 ## spec 格式
@@ -213,6 +224,9 @@ software-verifier 不只「被调用」，还能**作为 MCP client 去检查另
 | `exec` | `js` | 页面内执行任意 JS（选测试对象、读 state、精确点击） |
 | `screenshot` | `name` | 截图存 `shots/` |
 | `assert` | 同 asserts | **中途断言**（如先断言已打开→再关→再断言消失） |
+| `setLocale` | `locale`/`lang`/`value`,`url`/`path`/`sel`/`exec` | **国际化验证**：切到指定 locale（直接设 ctx.locale，或导航/点切换器/exec 触发），后续断言按该语言校验 |
+| `download` | `sel`,`dir?`,`minBytes?`,`sha?`/`expectSha?` | **下载校验**（仅 browser/electron）：点 `sel` 触发下载，校验文件大小/SHA-256；结果存 `ctx._lastDownload` 供 `download` 断言复用 |
+| `api` | `url`,`method?`,`headers?`,`body?`,`expectStatus?`,`contains?`,`jsonPath?`,`equals?`,`expectTruthy?` | **HTTP/接口验证**（需 `--allow-api` 显式开启网络）：请求接口并校验状态码/包含/JSON 字段 |
 
 ### 断言（asserts，任一不过即 FAIL）
 
@@ -220,6 +234,9 @@ software-verifier 不只「被调用」，还能**作为 MCP client 去检查另
 - `{ "notSel":".err", "desc":"无错误遮罩" }`
 - `{ "includes":"已连接", "desc":"状态变已连接" }`
 - `{ "eval":"document.querySelector('.x')?.value.length>0", "desc":"内容非空" }`
+- `{ "download":".x", "path?":"<文件>", "minBytes?":1024, "sha?":"<sha256>" }` —— 校验已下载文件存在/大小/SHA-256（`path` 缺省复用上次 `download` 步骤的 `ctx._lastDownload`）
+- `{ "api":{ "url":"...", "method?":"GET", "expectStatus?":200, "contains?":"ok", "jsonPath?":"$.data.id", "equals?":42 } }` —— **接口断言**（需 `--allow-api`）
+- `{ "openapi":{ "specUrl":"https://.../openapi.json", "path":"/users", "method?":"get" } }` —— **契约断言**：校验目标 OpenAPI 声明了指定方法+路径（需 `--allow-api`）
 
 ## 断言设计原则
 
