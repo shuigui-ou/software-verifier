@@ -1,0 +1,22 @@
+{
+  "display_name": "软件功能全量验证器",
+  "slug": "software-verifier",
+  "version": "1.4.6",
+  "category": "开发工具",
+  "tags": [
+    "软件测试",
+    "功能走查",
+    "回归验证",
+    "自动化",
+    "无头浏览器",
+    "自进化",
+    "自愈",
+    "视觉回归",
+    "MCP"
+  ],
+  "short_description": "像真人一样按说明书把软件功能全量验证一遍：无头 Edge/Electron/小程序/Appium 真实点击填表 → 截图抓错断言 → ✅/❌ 报告。只验证不修复；v1.4.5 起错误归因拆两层（HTTP 状态层不再被洗成环境噪声：同源 4xx/5xx 归宿主并计入 FAIL，第三方源降环境），并补 requestfailed / response≥400 采集通道、favicon/source-map 非功能性单列。 v1.4.5 把两条分叉线合并为单一版本：既有 api/openapi/setLocale/download 步骤与断言（此前仅存在于本地树）全部并入，并修掉 download 必然超时的根因（click 之后才 waitForEvent）。 v1.4.6 公开产物隐私修复：坑库 apps 字段此前会把真实宿主名写进随包发布的 pitfalls.json，现统一只写 <anon> 占位符并把匿名化收口到回传过滤（make/share/merge 全路径），存量已清洗。",
+  "long_description": "把一份说明书（或你自列的清单）转成结构化 spec，用本机自动化驱动**像真人一样**打开软件、逐个点按钮/填表/触发功能、截图、抓报错、断言预期，产出带 ✅/❌ 表格与截图的报告（Markdown + HTML）。引擎与被测软件解耦：换软件只换 spec。铁律是**只验证不修复**。\n\n驱动：browser（无头 Edge，默认）/ electron / miniprogram（微信小程序）/ appium（原生 App）。步骤 DSL：clickText / clickSel / fillSel / fillNear / fileSel / wait / waitSel / exec / screenshot / assert / ai。\n\n自愈与知识沉淀：\n· 【选择器自愈 Healer】选择器失效时用稳定信号找回等价元素；\n· 【零依赖视觉回归】DOM 布局指纹区分真缺陷与设计变更；\n· 【自进化知识库】跑完把踩坑沉淀为可复用解法，命中已知坑在报告附解法；坑库自维护（按信号词签名自动归并，库自洁净）；\n· 【贡献回流】--share 一键脱敏回传，社区越大 playbook 越准。\n\nv1.3.0 行为闭环（学到 → 动作前拦截，不再是“只写不读”）：\n· 【遮挡自愈】点击/等待被 loading/模态遮罩拦截时三档自愈（清遮罩重试 → 原生 DOM click 兜底），把 “element intercepts pointer events” 从反复失败变成不再发生，命中记入报告「自愈记录」；\n· 【复发哨兵】同一指纹被反复落地却仍复发 → 判定该候选无效并回写否决，报告显性打印“loop 在空转”，不再自欺；\n· 【网络与端口预检自愈】导航前等待目标可达（网络类）、launch 前探测端口占用则改用空闲端口；**证据驱动**：自动动作只由本机“学到的复发记忆”触发，坑库仅用于提示；\n· 【跨宿主指纹归一】剥离调用栈帧，同源错误在不同宿主收敛到同一指纹，共享知识库真正可跨宿主命中；\n· 引擎/内核 vendor 到 lib/，接入自包含（详见 EVOLUTION.md）。\n\n仅需 node ≥ 18 + playwright-core，零第三方运行时依赖。v1.4.0 去守门员化（G/P/I 双线贯通 + 读侧闭环）：agent-evolution 不再只当 E 类错误的守门员——新增期望落差(G)/计划偏离(P)/悬挂未完结(I) 三类信号接入进化账本并落盘，外部解法经 advisory 读回 verify.cjs 报告「进化提示」段，资料→经验→行为真正闭合成环，解除只写不读。\n\nv1.4.4 归因拆两层 + 采集通道补全（第三方靶子验证与分类器审计暴露）：\n· 【归因拆两层】HTTP 状态层（服务端确实应答 4xx/5xx）不再默认洗成\"环境噪声\"——同源→宿主并计入 FAIL、第三方源→环境、导航入口 URL 本身 4xx→工具（spec/配置问题）；网络传输层（net::ERR_*）按来源判：同源→宿主、跨源→环境。v1.4.3 因一刀切规则导致同源 404/500 被洗白（压力样本实测 2/2 误判）。\n· 【采集通道补全】驱动补 requestfailed 与 response(status≥400) 两个通道，并把请求 URL 附在消息尾部供判同源/跨源；审计实测真实站点 18/31 条请求失败此前对工具完全不可见。同一次失败两通道各出现一次时按 (状态码|URL) 归并，只出一条。\n· 【非功能性请求单列】favicon/source-map 单独成桶、不计入 FAIL（证据：真实运行中出现浏览器自发起且页面未声明的 /favicon.ico 404）。\n· 【导航/前置阶段错误】preErrors 显式收下（此前被首个功能点清理直接丢弃，导致\"入口 URL 不可用\"问题完全不可见）。\n· 【白名单前缀显式化】第三方库全局缺失不再隐式依赖 ReferenceError: 前缀（去掉前缀也稳定判环境），库名族用显式前缀声明 + 有界 token 匹配（MyHandlebars 之类仍判宿主，不被误吞）。\n\nv1.4.3 错误归因与静默失效修复（第三方靶子验证暴露）：把错误按「宿主缺陷 / 环境噪声 / 工具自身」三类归因——环境噪声（网络受限、第三方 CDN 全局缺失等）不再把无关功能点染成 FAIL，但带归因理由完整出现在报告里（绝不静默丢弃），需要严格口径时用 --strict-env 把环境噪声也计入 FAIL；修复截图失败被改写成 ok:true 的静默失效（现显式进 result.toolIssues 与报告「工具自身问题」段）；修复安全黑名单误杀合法断言（大小写敏感匹配，实测大小写变体不构成绕过）。\n\nv1.4.5 统一版（两条分叉线合并 + download 根因修复）：\n· 【合并分叉】此前存在两条互不包含的线：一条实现了 api/openapi/setLocale/download 步骤与断言，另一条带 v1.4.2–1.4.4 全部修复并把上述能力标注为\"规划中\"。1.4.5 取并集，文档与代码一致。\n· 【download 必然超时修复】驱动在 click 之后才 waitForEvent('download')，而下载事件在 click 期间就已派发 → 必然超时（用户坑库里\"已落地 2 次仍复发 2 次\"的根因）。裸 playwright 对照：page.on('download') 计数=1 但 waitForEvent 超时；改为 click 前建立等待 promise + 复用已注册回调捕获的事件后正常（对照 203ms 捕获成功）。\n· 【版本唯一真源】MCP serverInfo.version 从 SKILL.md frontmatter 动态读取；打包排除 .bak/.orig/.old 残留（此前备份文件会被打进包，内含修复前代码）。\n· 【能力实测证据】api 步骤/断言、openapi 契约断言、setLocale 步骤均在本地夹具上实测通过；未知断言键仍严格判 FAIL（v1.4.2 语义保留）。\n\nv1.4.6 公开产物隐私修复（公开物不再携带私有宿主名）：\n· 【真根因】evolve 在「命中已知坑」分支会把真实宿主名 push 进坑库 apps 字段，与同文件新建坑写 <anon> 自相矛盾，使随包发布/上架的 pitfalls.json 携带私有项目名（A/B 对照：修复前写入真实名、修复后写入 <anon>，两臂都确发生写入）。\n· 【修法】新增 APP_PLACEHOLDER 常量统一两处写入；匿名化规则收口到 contribute.sanitizePit（出站 make/share 与入站 merge 的唯一必经点），放行占位符与公开域名、其余归 <anon>；单测 30 项含 8 条反例（防退化成\"全洗白\"）。\n· 【存量清洗】坑库 15 处真实名匿名化（条目/命中/共享数不变）、实名示例改名 examples/demo-spec.json、4 处注释去点名。\n· 【发布面加固】运行态文件只留本地且已从仓库移除；三端门禁新增泄漏断言（远端含不可发布路径即报错）。",
+  "icon": "icon.png （单独上传，不进 zip）",
+  "package": "software-verifier.zip （无图片纯文本，手动上传）",
+  "repo_url": "https://github.com/shuigui-ou/software-verifier"
+}
