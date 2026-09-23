@@ -1,0 +1,1060 @@
+[
+  {
+    "id": "dom-hidden-container",
+    "category": "显隐/容器",
+    "symptom": "目标元素在隐藏容器内（如 #moreMenu 默认 hidden、折叠面板、未激活 tab），clickSel 报 element is not visible，或被遮罩拦截报 intercepts pointer events。",
+    "patterns": [
+      "not visible",
+      "is not visible",
+      "intercepts pointer events",
+      "modal intercepts",
+      "hidden",
+      "resolved to hidden"
+    ],
+    "fix": "先 clickText 打开菜单/展开面板/切到对应 tab，再 clickSel 目标；若仍被遮罩拦截，用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "selector-nth-siblings",
+    "category": "选择器精度",
+    "symptom": "列表/树中同名按钮（每块一个 data-act）用 nth 点错对象，例如点了嵌套子块的「降级」而非新增块的「降级」。",
+    "patterns": [
+      "nth",
+      "降级",
+      "升级",
+      "data-act",
+      "sibling"
+    ],
+    "fix": "setup 里用 exec 记录目标对象 id（如 state.plan[1].id），再 exec `document.querySelector('[data-id=\"ID\"] [data-act=\"x\"]').click()` 精确触发，避免 nth 歧义。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "assert-emptyOnlyFill",
+    "category": "断言语义",
+    "symptom": "被测功能仅对「空字段」生效（如变量联动 linkFill 只填空字段），断言「被全局值填充」却未清空原值，导致误报失败。",
+    "patterns": [
+      "变量联动",
+      "linkFill",
+      "只填空",
+      "空字段",
+      "联动填充"
+    ],
+    "fix": "这是软件设计（仅填空字段）。验证此类功能时，先在 setup 用 exec 清空目标字段再触发，断言才成立；非 bug。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "engine-autonav",
+    "category": "引擎/环境",
+    "symptom": "browser 驱动启动后 page 停在 about:blank，所有功能 0/N 失败（clickText/waitSel 全找不到）。",
+    "patterns": [
+      "about:blank",
+      "0/18",
+      "0 通过",
+      "导航"
+    ],
+    "fix": "verify.cjs 已修复：启动即自动 goto(BASE+\"/\")。若仍 0/N，检查 --url 是否可达、被测静态服务器是否已起（如 python -m http.server）。",
+    "apps": [
+      "通用"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "action-timeout",
+    "category": "行动性超时",
+    "symptom": "clickText/clickSel 超时：element not found / not stable / not enabled。",
+    "patterns": [
+      "Timeout",
+      "waiting for element",
+      "not stable",
+      "not found",
+      "exceeded"
+    ],
+    "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
+    "apps": [
+      "通用"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-28",
+    "lastSeen": "2026-08-28",
+    "shared": true
+  },
+  {
+    "id": "seed-overlay-intercept",
+    "category": "显隐/容器",
+    "symptom": "点击目标时报 element is not clickable at point，因弹窗/loading 遮罩/tooltip 挡在上方先接收了点击。",
+    "patterns": [
+      "is not clickable at point",
+      "would receive the click",
+      "intercepts pointer events",
+      "Other element would receive"
+    ],
+    "fix": "先关闭/等待遮罩消失（waitSel 遮罩消失或 exec 隐藏），再点击；顽固遮罩用 exec 在页面内 el.click() 绕过 Playwright 行动性检查。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 120,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-hidden-in-container",
+    "category": "显隐/容器",
+    "symptom": "目标元素在隐藏容器内（display:none / visibility:hidden / 零尺寸），报 element is not visible 或不可点击。",
+    "patterns": [
+      "is not visible",
+      "not visible",
+      "has zero size",
+      "is hidden"
+    ],
+    "fix": "先展开容器/切到对应 tab/触发渲染（clickText 打开菜单），再操作目标；或 exec 直接操作 DOM。",
+    "apps": [
+      "<public>",
+      "<anon>"
+    ],
+    "hits": 96,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-detached-from-dom",
+    "category": "选择器精度",
+    "symptom": "React/Vue 重渲染后句柄失效，报 Node is detached from the document / Element is not attached。",
+    "patterns": [
+      "detached from the DOM",
+      "detached from the document",
+      "is not attached",
+      "not attached to the DOM"
+    ],
+    "fix": "每次操作前重新定位（用 locator 而非缓存的 elementHandle）；或在重渲染后重新查询再点。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 88,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-strict-mode-multiple",
+    "category": "选择器精度",
+    "symptom": "选择器命中多个元素，报 Strict mode violation: locator resolved to N elements。",
+    "patterns": [
+      "elements. Strict mode",
+      "strict mode violation",
+      "strict mode"
+    ],
+    "fix": "收窄选择器（加 data-testid / 文本 / 上下文），或用 .first() / .nth(i) / .last() 明确取第几个。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 76,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-zero-elements",
+    "category": "行动性超时",
+    "symptom": "选择器命中 0 个元素，报 locator resolved to 0 elements / unable to find。",
+    "patterns": [
+      "resolved to 0 elements",
+      "no elements",
+      "unable to find",
+      "Unable to find"
+    ],
+    "fix": "先 waitSel 等待出现（SPA 异步渲染）；核对选择器是否拼错/在 iframe 或 shadow DOM 内。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 70,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-networkidle-never",
+    "category": "引擎/环境",
+    "symptom": "等待 load state 'networkidle' 超时，因 SPA 持续轮询/长连接导致网络永不空闲。",
+    "patterns": [
+      "networkidle",
+      "load state",
+      "waiting for load"
+    ],
+    "fix": "对 SPA 改用 waitUntil:'domcontentloaded' 或 'load'，或显式 waitSel 关键元素而非等网络空闲。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 64,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-execution-context-destroyed",
+    "category": "引擎/环境",
+    "symptom": "页面导航/重渲染中执行中断，报 Execution context was destroyed, most likely because of a navigation。",
+    "patterns": [
+      "Execution context was destroyed",
+      "context was destroyed",
+      "because of a navigation"
+    ],
+    "fix": "等待导航稳定后再操作；易抖动步骤前加 waitSel 或 page.waitForLoadState('load')。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 58,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-target-closed",
+    "category": "引擎/环境",
+    "symptom": "浏览器/页面意外关闭，报 Target closed / Page closed。",
+    "patterns": [
+      "Target closed",
+      "Page closed",
+      "Target page"
+    ],
+    "fix": "确保浏览器进程存活；捕获崩溃重开；长任务避免触发登出/跳转导致页面关闭。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 41,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-shadow-dom",
+    "category": "选择器精度",
+    "symptom": "元素在 shadow root 内，默认选择器找不到（Web Components / 设计系统）。",
+    "patterns": [
+      "shadow",
+      "shadow root",
+      "pierce",
+      "open mode"
+    ],
+    "fix": "用穿透选择器或 Text/Role locator；Playwright 默认可跨 shadow 边界定位，确认未用隔离 closed-mode；必要时 elementHandle.evaluate 进 shadow。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 52,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-iframe-context",
+    "category": "选择器精度",
+    "symptom": "元素在 iframe 内，当前选择器在顶层文档解析，报找不到或点到错误上下文。",
+    "patterns": [
+      "frame",
+      "contentframe",
+      "switch to frame",
+      "iframe"
+    ],
+    "fix": "用 frameLocator('iframe').locator(...) 切到正确 frame 再操作。",
+    "apps": [
+      "<public>",
+      "<anon>"
+    ],
+    "hits": 48,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-file-input",
+    "category": "断言语义",
+    "symptom": "type=file 的 input 无法 fill，报 Input of type 'file' cannot be filled。",
+    "patterns": [
+      "type \"file\"",
+      "cannot be filled",
+      "Input of type",
+      "file\" cannot"
+    ],
+    "fix": "用 setInputFiles(path) 上传；隐藏的 file input 先令其可见或用 inputElementHandle.setInputFiles。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 39,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-date-input",
+    "category": "断言语义",
+    "symptom": "原生日期输入 fill 不生效或弹原生选择器挡住后续。",
+    "patterns": [
+      "type \"date\"",
+      "date input",
+      "native date"
+    ],
+    "fix": "对 type=date 用 fill('YYYY-MM-DD')；避免触发原生 picker，必要时用 keyboard 输入。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 22,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-contenteditable",
+    "category": "断言语义",
+    "symptom": "contenteditable 区域 fill 无效（fill 只作用于 input/textarea）。",
+    "patterns": [
+      "contenteditable",
+      "content-editable"
+    ],
+    "fix": "先 click 聚焦，再用 page.keyboard.type / insertText 输入；或 exec 设 textContent。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 33,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-animation-not-stable",
+    "category": "行动性超时",
+    "symptom": "元素动画/过渡中位置变化，报 element is not stable - waiting for it to be stable。",
+    "patterns": [
+      "is not stable",
+      "waiting for it to be stable",
+      "not stable"
+    ],
+    "fix": "等待动画结束（waitFor 或显式 setTimeout）；必要时用 force:true 强制操作（跳过稳定检查）。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 61,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-hover-menu",
+    "category": "显隐/容器",
+    "symptom": "菜单项需 hover 才出现，直接 click 报 not visible。",
+    "patterns": [
+      "not visible",
+      "hover",
+      "menu item"
+    ],
+    "fix": "先 hover 父项触发菜单渲染，再 click 子项；或用 force:true 强制。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 44,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-lazy-load",
+    "category": "显隐/容器",
+    "symptom": "长列表/图片懒加载，视口外元素未渲染，报 not visible / 0 elements。",
+    "patterns": [
+      "not visible",
+      "lazy",
+      "infinite scroll",
+      "IntersectionObserver"
+    ],
+    "fix": "scrollIntoView 触发渲染后再操作；或滚到列表底部加载更多。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 37,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-css-module-class",
+    "category": "选择器精度",
+    "symptom": "选择器用了 CSS Modules 哈希类名（_abc123），重建后类名变化导致找不到。",
+    "patterns": [
+      "_",
+      "css module",
+      "hashed class",
+      "module"
+    ],
+    "fix": "改用稳定钩子：data-testid / 文本 / role / aria-label，而非构建产物哈希类名。",
+    "apps": [
+      "<public>",
+      "<anon>"
+    ],
+    "hits": 56,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-captcha-antibot",
+    "category": "引擎/环境",
+    "symptom": "自动化触发验证码/人机校验，交互被拦截。",
+    "patterns": [
+      "captcha",
+      "verify you are human",
+      "anti-bot",
+      "are you a robot"
+    ],
+    "fix": "验证码类步骤不纳入自动化；用测试环境跳过/白名单账号；人工介入该步。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 29,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-rate-limit-429",
+    "category": "引擎/环境",
+    "symptom": "高频自动化触发限流，报 429 Too Many Requests。",
+    "patterns": [
+      "429",
+      "Too Many Requests",
+      "rate limit",
+      "rate-limit"
+    ],
+    "fix": "步骤间加节流/随机 delay；复用会话避免重复登录；对限流接口退避重试。",
+    "apps": [
+      "<public>"
+    ],
+    "hits": 26,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-29",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-token-expired",
+    "category": "引擎/环境",
+    "symptom": "运行中登录态过期，报 401 Unauthorized / token expired，后续全失败。",
+    "patterns": [
+      "401",
+      "Unauthorized",
+      "token expired",
+      "token",
+      "expired"
+    ],
+    "fix": "在 setup 预刷新 token / 重新登录；长任务分片避免会话超时；断言先校验已登录。",
+    "apps": [
+      "<public>",
+      "<anon>"
+    ],
+    "hits": 36,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-09-01",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "seed-action-timeout-generic",
+    "category": "行动性超时",
+    "symptom": "click/fill 超时：element not found / not stable / not enabled / waiting for element。",
+    "patterns": [
+      "Timeout",
+      "waiting for element",
+      "not stable",
+      "not enabled",
+      "exceeded"
+    ],
+    "fix": "确认文本/选择器正确；优先用 clickText（文字稳）；动态列表先 waitSel 再点；必要时用 exec 直接操作 DOM。",
+    "apps": [
+      "<public>",
+      "<anon>"
+    ],
+    "hits": 57,
+    "firstSeen": "2026-08-29",
+    "lastSeen": "2026-08-31",
+    "shared": true,
+    "consent": "granted",
+    "seed": true
+  },
+  {
+    "id": "anon-clicktext",
+    "category": "未知",
+    "symptom": "步骤 clickText 失败:",
+    "patterns": [
+      "clickText 失败"
+    ],
+    "fix": "clickText 未找到可点击文本。文本可能在 overlay / 动画后出现、或被截断；改用 clickSel + 稳定选择器；确认元素可点击（未被 pointer-events:none 遮罩拦截，见 seed-overlay-intercept）。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 3,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
+  },
+  {
+    "id": "anon-selector-miss",
+    "category": "显隐/容器",
+    "symptom": "断言失败: 选择器 .side-view 命中 0 个（要求≥1）；或步骤 waitSel 超时(含自愈)",
+    "patterns": [
+      "命中 0 个",
+      "waitSel 超时",
+      "!!document.querySelector"
+    ],
+    "fix": "元素未出现或等待超时。先确认是否在 overlay / iframe / shadow DOM 内（需切上下文或穿透）；选择器失效时启用自愈 Healer，按 data-testid→aria-label→role+文本 稳定信号找回等价元素；建议给目标元素加 data-testid 提升验证稳定性。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 26,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 24
+  },
+  {
+    "id": "anon-assert-count",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.querySelectorAll(<str>).length===10) = false",
+    "patterns": [
+      "querySelectorAll"
+    ],
+    "fix": "列表项数量不符。确认数据是否已加载完（分页 / 懒加载 / 动画），必要时等待后再数；区分「恰好 N」与「至少 N」语义；数量变化属预期时改用 >= 阈值断言。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 13,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 13
+  },
+  {
+    "id": "anon-assert-text",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).textContent.includes(<str>)) = false",
+    "patterns": [
+      "textContent",
+      "textcontent",
+      "indexof",
+      "includes("
+    ],
+    "fix": "文本断言未命中。可能：(a) 文本异步渲染 / 动画后才出现→先 waitSel 或轮询；(b) 含不可见字符 / 大小写差异→断言做 trim() + toLowerCase()；(c) 元素未挂载→先断言元素存在再比文本。优先用稳定文本 / role 信号，避免依赖动态拼接文本。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 8,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 8
+  },
+  {
+    "id": "anon-eval-undef",
+    "category": "断言语义",
+    "symptom": "步骤 exec 失败: page.evaluate: ReferenceError: trainphase is not defined at eval...",
+    "patterns": [
+      "is not defined at eval",
+      "ReferenceError"
+    ],
+    "fix": "eval 表达式引用了页面作用域不存在的变量（trainphase / toggleRef / showStory 等组件内部状态）。validate 的 eval 不应读取框架内部变量名——它们常未挂到 window 且随实现变化。改为用稳定 DOM 信号（data-testid / text / role / classList）表达断言；若必须读状态，先确认该变量已显式挂到 window。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 9,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 9
+  },
+  {
+    "id": "anon-assert-class",
+    "category": "显隐/容器",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).classList.contains(<str>))",
+    "patterns": [
+      "classList.contains"
+    ],
+    "fix": "类名 / 显隐状态断言失败。确认元素是否真在当前 DOM（被 v-if / 条件渲染移除时 getElementById 返回 null）；类名若是 CSS Module 哈希（如 _abc123）会随机变化→用 data-testid 或稳定业务 class 而非编译后哈希类；显隐优先用 :visible 或 aria-hidden 判断。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 4,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 4
+  },
+  {
+    "id": "anon-assert-prop",
+    "category": "断言语义",
+    "symptom": "步骤 assert 失败: eval(document.getElementById(<str>).width>0) = false",
+    "patterns": [
+      ".width>0",
+      "disabled===false",
+      ".value.length",
+      "parseInt("
+    ],
+    "fix": "属性断言失败。元素可能未渲染完成（width=0 说明还没布局或隐藏）→先等可见再断言；disabled / value 用稳定状态信号；读取前先判空。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 3,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 3
+  },
+  {
+    "id": "anon-eval-null",
+    "category": "断言语义",
+    "symptom": "步骤 exec 失败: page.evaluate: TypeError: Cannot read properties of null (reading ...)",
+    "patterns": [
+      "cannot read properties of null",
+      "reading '"
+    ],
+    "fix": "eval 拿到 null 元素仍访问其属性（.width / .textContent 等）。先 !!document.querySelector(sel) 判空再读取；元素未挂载时先等待再断言。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-08-31",
+    "lastSeen": "2026-08-31",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
+  },
+  {
+    "id": "anon-ai-fail",
+    "category": "未知",
+    "symptom": "步骤 ai 失败:",
+    "patterns": [
+      "步骤 ai 失败"
+    ],
+    "fix": "AI 步骤执行失败。检查 LLM token 是否过期 / 超额（见 seed-token-expired）；网络抖动重试；确认该步骤输入上下文是否过长触发截断。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 4,
+    "firstSeen": "2026-09-01",
+    "lastSeen": "2026-09-01",
+    "shared": false,
+    "consent": "granted",
+    "seed": false,
+    "dedupFrom": 1
+  },
+  {
+    "id": "dup-process-append-fork",
+    "category": "引擎/环境",
+    "symptom": "两个进程并发 append 同一 append-only JSONL 账本（如 audit 链）：seq 重复、prev 指向同一旧 hash，verify() 报 seq_gap/prev_mismatch 断链。升级/重启服务时旧进程未杀干净最容易触发。",
+    "patterns": [
+      "seq_gap",
+      "prev_mismatch",
+      "duplicate seq",
+      "audit verify false",
+      "链分叉",
+      "seq 重复"
+    ],
+    "fix": "①升级/重启前先确认唯一进程：netstat -ano 找监听 PID 并强制终止旧实例。②账本 append 前重读磁盘链尾（refreshFromDisk）+ wx 锁文件互斥。③数据修复：按内容匹配（ts+type 特征）删孤儿链行、保留按周期连续到最新 seq 的权威链——prev 恰好衔接则无需重算任何 hash。删前备份 .fork-bak。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "stale-port-eaddrinuse",
+    "category": "引擎/环境",
+    "symptom": "重启本机服务（如 node server.js 端口 3000）报 EADDRINUSE :::3000，但任务列表/旧记忆里的 PID 已失效，Get-CimInstance 按旧 PID 查不到。",
+    "patterns": [
+      "EADDRINUSE",
+      "address already in use",
+      "端口被占用",
+      "port in use"
+    ],
+    "fix": "netstat -ano | grep ':PORT.*LISTEN' 直接定位当前占用 PID（不依赖记忆的旧 PID）；PowerShell 用 Get-NetTCPConnection -LocalPort PORT -State Listen 取 OwningProcess；先强制终止旧进程再起新实例。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "staging-doc-overwrite",
+    "category": "引擎/环境",
+    "symptom": "skill 发布 staging 目录的 README.md/SKILL.md 是技能包裁剪版，与仓库开源版是两版文档；全量同步时 cp/git 覆盖会丢掉技能包版内容（死链、宿主语境残留）。",
+    "patterns": [
+      "staging",
+      "覆盖",
+      "README 被覆盖",
+      "技能包版",
+      "manifest 不同步",
+      "staging 落后"
+    ],
+    "fix": "staging 同步脚本排除 README.md/SKILL.md/skillhub.yaml；这三份的版本号/自验测试数/功能简述手工同步（改前先 grep 版本字样）。发布前校验 manifest files 段与磁盘 1:1（差集应只剩 icon.png）。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "sandbox-tunnel-502",
+    "category": "引擎/环境",
+    "symptom": "沙箱内 git push / 外网请求间歇性 CONNECT tunnel failed, response 502——同一会话内前几次成功、之后持续失败，属网络隧道波动而非代码/凭据问题。",
+    "patterns": [
+      "CONNECT tunnel failed",
+      "response 502",
+      "tunnel 502",
+      "push 失败"
+    ],
+    "fix": "失败先重试 2-3 次（间隔 sleep 20）；持续 502 则本地 commit 保留（数据安全）、任务其余部分继续推进、网络恢复后补推。勿反复盲试阻塞任务。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-11",
+    "shared": true
+  },
+  {
+    "id": "win-cross-shell-blocked",
+    "category": "引擎/环境",
+    "symptom": "从 Bash 里调 powershell.exe 或 wmic.exe 被安全策略拦截（Program Blacklist / 跨 shell 防绕过），命令直接 blocked 无法放行。",
+    "patterns": [
+      "blocked by security policy",
+      "Program Blacklist",
+      "Invoking PowerShell from Bash",
+      "wmic"
+    ],
+    "fix": "Windows 会话：PowerShell 操作用原生 PowerShell 工具（不从 Bash 调用）；wmic 已被黑名单，进程/端口查询用 Get-CimInstance（按 ProcessId 精确查）或 netstat -ano。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "gitbash-path-python",
+    "category": "引擎/环境",
+    "symptom": "Git Bash 的 /c/Users/... 路径直接传给 Python 的 open()/json.load 报 FileNotFoundError：Python(Windows) 不识别 MSYS 虚拟路径。",
+    "patterns": [
+      "FileNotFoundError",
+      "/c/Users",
+      "MSYS",
+      "路径转换",
+      "No such file or directory"
+    ],
+    "fix": "Python 脚本内一律用 r\"C:\\...\" Windows 原生路径；或脚本先 os.chdir 到 cwd。shell 层的 ls/cp 可继续用 /c/ 路径，只有进入 Python/Node 参数时才转。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "powershell-empty-output-trap",
+    "category": "引擎/环境",
+    "symptom": "PowerShell 过滤型查询（Get-CimInstance/Get-NetTCPConnection 带过滤条件）无命中时输出为空但 exit code 0——易误判为\"命令失败\"或\"进程不存在\"。",
+    "patterns": [
+      "exit code 0",
+      "输出为空",
+      "empty output",
+      "SilentlyContinue",
+      "误判"
+    ],
+    "fix": "空输出+exit0 = 查询语法执行成功但无命中；用 netstat -ano 交叉验证端口/进程结论，不要凭单一空输出下判断。需要区分\"没查到\"与\"没权限\"时显式 Write-Output 哨兵值。",
+    "apps": [
+      "<anon>"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-09",
+    "lastSeen": "2026-09-09",
+    "shared": true
+  },
+  {
+    "id": "third-party-cdn-flaky",
+    "category": "引擎/环境",
+    "symptom": "第三方站点依赖的外部 CDN / 外链资源在当前网络间歇失败（ERR_CONNECTION_RESET / ERR_BLOCKED_BY_ORB / ERR_NAME_NOT_RESOLVED），被依赖脚本未加载 → 页面抛 `ReferenceError: X is not defined`，该错误会被驱动算进**当前功能点**，把加载/渲染类断言全绿的功能点染成 FAIL。2026-09-22 在 element-plus/vuejs/antd 实测：同一 spec 三轮跑出 6/8、5/8、7/8，差异全来自此类噪声。",
+    "patterns": [
+      "ERR_CONNECTION_RESET",
+      "ERR_BLOCKED_BY_ORB",
+      "ERR_NAME_NOT_RESOLVED",
+      "Handlebars is not defined",
+      "cdn.jsdelivr.net",
+      "storage.googleapis.com"
+    ],
+    "fix": "验第三方站点前先跑一轮\"裸加载基线\"（不挂验证器），把不属于被测功能的 pageerror / 资源失败登记为允许噪声；或使用 v1.4.3+ 的默认模式（环境噪声归入 envNoise、不计 FAIL），需要严格门禁时再用 --strict-env。",
+    "apps": [
+      "element-plus.org",
+      "cn.vuejs.org",
+      "ant.design",
+      "www.antdv.com",
+      "www.w3schools.com"
+    ],
+    "hits": 4,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "string-literal-blocked",
+    "category": "断言语义",
+    "symptom": "断言/exec 表达式里出现 JS `function` 关键字或字符串 `'function'`（如 `typeof el.closest === 'function'`、`a.includes('function')`），旧版安全校验用大小写不敏感正则匹配 `Function`，把它们一并拦下并判 FAIL——**安全机制反过来伪造了功能失败**。2026-09-22 element-plus 走查实测：首轮 4/8 里有 **6 条假 FAIL** 全部出自这一条规则。",
+    "patterns": [
+      "表达式含被禁止的标识符",
+      "安全校验未通过",
+      "Function"
+    ],
+    "fix": "工具侧已修（v1.4.3：黑名单改大小写敏感、只拦构造器形态，BLOCKED 20 条探针全部仍被拦截，零安全回退）。写 spec 时仍建议内联谓词用箭头函数：`.filter(o=>getComputedStyle(o).display!=='none')`。",
+    "apps": [
+      "element-plus.org"
+    ],
+    "hits": 6,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "float-layer-dom-persistent",
+    "category": "显隐/容器",
+    "symptom": "组件库的下拉/浮层在**关闭态仍常驻 DOM**（element-plus 单页实测 `.el-select-dropdown` 常驻 **27 个**，仅以离屏/opacity 方式隐藏）→ 用 `{sel:\".el-select-dropdown\",min:1}` 这类\"数 DOM 个数\"的断言在关闭态也恒真，造成**假绿**。",
+    "patterns": [
+      "el-select-dropdown",
+      "el-popper",
+      "el-cascader__dropdown",
+      "el-picker__popper"
+    ],
+    "fix": "可见性断言必须配可见性判定而非数个数：`eval` 用 `getComputedStyle(el).display!=='none'` 且 `el.getBoundingClientRect().width>0`；`sel+min` 只用于\"元素已渲染\"，不可当\"已可见\"。",
+    "apps": [
+      "element-plus.org"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "screenshot-fail-as-ok",
+    "category": "引擎/环境",
+    "symptom": "截图落盘失败（如步骤 `name` 未带图片扩展名 → `path: unsupported mime type \"null\"`）在旧版被改写成 `ok:true` + `warn`，而 warn 无任何消费者 → **证据静默丢失、报告全绿**。2026-09-22 element-plus 实测：为 Dialog 确认链安排的 **11 张命名截图全部丢失**，步骤均报 ok。",
+    "patterns": [
+      "unsupported mime type",
+      "截图未采集",
+      "screenshot 失败",
+      "ShotFailed"
+    ],
+    "fix": "工具侧已修（v1.4.3：失败步进 toolIssues + 控制台 `⚠ 工具自检` + 报告「工具自身问题」段）。spec 侧把截图 `name` 写成 `\"F01-home.png\"`。",
+    "apps": [
+      "element-plus.org"
+    ],
+    "hits": 11,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "common-bem-misjudged",
+    "category": "选择器精度",
+    "symptom": "断言编写向导把**公开语义化 BEM 类名**（`.el-button--primary`、`.el-select__wrapper`）判为\"疑似 CSS Modules 哈希类名 / 级别 low\"，建议改用 `data-testid`——而第三方站点 `data-testid` 常为 0，建议不可执行；`--html` 模式还会把 `<script id>` 当稳定锚点（vuejs 站点 615 个锚点里 93% 是它自己都标\"谨慎\"的 class）。",
+    "patterns": [
+      "el-button--primary",
+      "el-select__wrapper",
+      "block__element",
+      "疑似 CSS Modules 哈希类名"
+    ],
+    "fix": "向导侧应把 `__`/`--` 优先识别为 BEM 分隔符而非哈希；对无 `data-testid` 的站点改推 `[aria-label]` / `role` / `href` 等语义锚点（实测 `[aria-label=\"toggle dark mode\"]` 最稳），并过滤 script/style/meta/link 等非渲染标签。",
+    "apps": [
+      "element-plus.org",
+      "cn.vuejs.org"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "before-close-confirm-chain",
+    "category": "行动性超时",
+    "symptom": "宿主用 `before-close` 实现\"关闭前二次确认\"时，点关闭图标（`.el-dialog__headerbtn`）**不会关闭**弹窗，而是弹出确认层 `.el-message-box` → \"点关闭即消失\"这条断言是错的，会产出假 FAIL；内置遮挡自愈若把 `.el-dialog__headerbtn` 当 closer，还会弹确认框污染后续步骤。",
+    "patterns": [
+      "el-dialog__headerbtn",
+      "el-message-box",
+      "before-close"
+    ],
+    "fix": "关闭类断言语义改为\"先探测 `.el-message-box` 是否存在 → 有则走确认链路再断言消失\"；自愈 closer 不要在未探测确认层时点弹窗头部关闭按钮，可先按 Escape 再复检遮罩状态。",
+    "apps": [
+      "element-plus.org"
+    ],
+    "hits": 1,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "http-status-vs-network-conflated",
+    "category": "引擎/环境",
+    "symptom": "错误归因把**两个本质不同的层**合并成一类：`/Failed to load resource/` 同时吃下\"服务端确实响应了 4xx/5xx\"（HTTP 状态层，归属可查）与 `net::ERR_*`（网络层，环境因素）→ 站点自有坏资源、或 spec 路径写错造成的**同源 404 会被判「环境噪声」，默认模式不计入 FAIL**。2026-09-22 用真实站点同源 404 构造压力样本实测：2/2 被误判为 env（审计合计准确率因此从 100% 回落到 90%）。",
+    "patterns": [
+      "the server responded with a status of 404",
+      "the server responded with a status of 500",
+      "the server responded with a status of 4",
+      "the server responded with a status of 5"
+    ],
+    "fix": "归因规则拆分两层：含 `the server responded with a status of <code>` 视为 **HTTP 状态层**（同源 → 宿主/spec 侧，可查；跨源 → 外链坏链），含 `net::ERR_*` 才视为网络层。默认模式下前者不应被直接洗成 env。 【已落地 v1.4.4 · 2026-09-22】error-classify.cjs 已拆两层：含 `the server responded with a status of NNN` 判 HTTP 状态层（同源→宿主、第三方源→环境、导航入口 URL 4xx→工具），含 `net::ERR_*` 才判网络层。A/B 实测（同一夹具同一时刻现跑现比）：同源 404/500 由「env·功能点 PASS（被洗白）」变为「host·功能点 FAIL」；阴性对照（宿主 JS 异常）在默认/严格/strict-env 三种模式下始终 FAIL，证明没有变成\"洗白工具\"。",
+    "apps": [
+      "cn.vuejs.org",
+      "element-plus.org"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "requestfailed-not-captured",
+    "category": "引擎/环境",
+    "symptom": "真实**请求层失败根本没被采集**：驱动只监听 `console`/`pageerror`，未监听 `requestfailed` → 未被浏览器记成 console error 的失败对工具完全不可见。2026-09-22 在 11 个第三方页面实测 31 条请求失败，**仅 13 条**同时以 console error 形式出现，**18 条完全不可见**（含 ERR_BLOCKED_BY_ORB / ERR_ABORTED 类）。v1.4.3 只修了\"过滤后不读取\"，没修\"根本没采集\"。",
+    "patterns": [
+      "requestfailed",
+      "ERR_ABORTED",
+      "ERR_BLOCKED_BY_ORB"
+    ],
+    "fix": "驱动补 `page.on('requestfailed')` 与 `page.on('response')`（status≥400），带请求 URL host 一起入库，交由 error-classify 按来源 host 归因（同源坏资源=宿主，跨源=环境）。 【已落地 v1.4.4 · 2026-09-22】drivers/dom.js 已补 `page.on('requestfailed')` 与 `page.on('response')`（status≥400），并把请求 URL 附在消息尾部（` | url=...`）供判同源/跨源；同一次失败在两通道各出现一次时按 (状态码|URL) 归并只出一条。诚实核验口径：离线夹具 6/6 条 requestfailed 仍被 console 回声（本机 0 条新增可见条目）；真实站点 element-plus.org 实测 1 条 `net::ERR_ABORTED`（www.google-analytics.com）控制台完全静默 → 已被采集并归 env。18/31 的静默比例来自上一轮 11 页审计，本轮未重测。",
+    "apps": [
+      "element-plus.org",
+      "cn.vuejs.org",
+      "ant.design",
+      "www.antdv.com",
+      "www.w3schools.com"
+    ],
+    "hits": 18,
+    "firstSeen": "2026-09-22",
+    "lastSeen": "2026-09-22",
+    "shared": true
+  },
+  {
+    "id": "download-waitforevent-registered-after-click",
+    "category": "引擎/环境",
+    "symptom": "`download` 步骤**必然超时**（\"等待下载事件超时\"）：驱动在 `click()` **之后**才 `page.waitForEvent('download')`，而 download 事件在 click 期间就已派发 → 等待注册时事件已成过去式。2026-09-23 裸 playwright 对照证明**不是环境限制**：同一页面 `page.on('download')` 计数=1（事件确实发生），但 click 之后注册的 waitForEvent 12s 超时。此项在宿主账本里表现为\"同一指纹已落地 2 次、首次落地后仍复发 2 次\"——两次\"修复\"都没动到 click/wait 的先后顺序。",
+    "patterns": [
+      "等待下载事件超时",
+      "waitForEvent: Timeout",
+      "downloadSel 未找到"
+    ],
+    "fix": "把\"等待\"提到\"点击\"之前：`const dlWait = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);` 再 click，随后 `let download = dl || (await dlWait);`（`dl` 来自 click 前已注册的 `page.on('download')` 回调，通常 click 返回时已就绪 → 零等待）。另需确认 browser 驱动用 `browser.newContext({ acceptDownloads: true })` 而非 `browser.newPage()`。 【已落地 v1.4.5 · 2026-09-23】drivers/dom.js 已按上述改写（click 前建 promise + 复用已注册回调），本地夹具 8954 上 download 步骤 + download 断言实测 PASS。诊断提示：若报 \"downloadSel 未找到\"，检查是否在 `String.replace` 里把 `page.$$(sel)` 写成了 `page.$(sel)`（`$$` 在替换串中是转义，会静默变成 `$`）。",
+    "apps": [
+      "本地夹具 8954（feature probe）",
+      "element-plus.org 类站点"
+    ],
+    "hits": 2,
+    "firstSeen": "2026-09-23",
+    "lastSeen": "2026-09-23",
+    "shared": true
+  },
+  {
+    "id": "audit-lock-unbounded-sync-busy-wait",
+    "category": "引擎/环境",
+    "symptom": "**整轮验证静默消失**，且一个根因三种现场：① 死在 `evo.init()` → stdout **0 字节**、无 result.json（连启动横幅都没有，文件重定向也是 0 字节）；② 死在 `evo.openThread()` → 只打印到\"将验证 N/N 个功能点\"就再无输出、shots 0 张；③ 死在 `evoRun()` → 报告已写出但**进程永不退出**。根因：`lib/evolution-kernel/src/audit.cjs` 的 `acquireLock()` 把超时判定写在 `catch` **之后**，而 `catch (_e2) { continue; }` 与陈旧锁分支都能绕过它 → 当**锁文件删不掉**时进入无退避、无上限的同步忙等（`sleepSync` 用 `Atomics.wait` 冻住事件循环，stdout 永不 flush）。现场铁证：fs 层打点 300 行全是 `openSync(wx) EEXIST → unlinkSync 抛错 → openSync(wx) EEXIST → …`；同代码同状态，排除 `.lock` 的副本 init 2099ms 通过 vs 保留 `.lock` 的副本 25s 挂死。",
+    "patterns": [
+      "审计锁不可用，已降级为不加锁继续",
+      "SAFE_DELETE_BULK_CONFIRM_REQUIRED",
+      "audit.jsonl.lock"
+    ],
+    "fix": "诊断顺序：① 看工作目录下是否有 `audit.jsonl.lock` 残留（被 kill 的运行会留下）；② 有则在**没有其他进程占用**时删掉它再重跑；③ 代码侧应在两条 `continue` 之前补超时判定（`if (Date.now() - start > LOCK_WAIT_MS) { noteLockDegrade(...); return null; }`）并对\"锁删不掉\"分支加退避 sleep，兑现注释承诺的 2s fail-open。 【已落地 v1.4.4/v1.4.5 · 2026-09-23】超时 fail-open 已补（锁删不掉时 2009ms 放弃并告警，链仍完整）；v1.4.5 再加进程内 30s 降级冷却——一次 fail-open 后后续取锁只做最多 2 次非阻塞尝试，5 连写从 10036ms 降到 2064ms，锁恢复可删/可取时立即退出冷却。残余：冷却窗口过后若锁仍不可用会再付一次 2s（有界，非无界）。",
+    "apps": [
+      "software-verifier 自身运行",
+      "任何用同步文件锁的 Node 工具"
+    ],
+    "hits": 3,
+    "firstSeen": "2026-09-23",
+    "lastSeen": "2026-09-23",
+    "shared": true
+  }
+]
