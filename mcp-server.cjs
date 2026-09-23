@@ -1,0 +1,362 @@
+#!/usr/bin/env node
+/**
+ * mcp-server.cjs —— software-verifier 的 MCP（Model Context Protocol）服务端
+ *
+ * 零依赖：用原生 Node 进程 stdin/stdout 实现 JSON-RPC 2.0（MCP 传输层），
+ * 不需要 @modelcontextprotocol/sdk。让「别的 agent / 别的 skill」能直接调用
+ * 本 skill 的验证能力（浏览器走查 / 自愈 / 视觉回归），而不必加载整个 skill 指令。
+ *
+ * 暴露的工具：
+ *   - verify_run      : 跑一次完整验证（复用 verify.cjs 引擎），返回 result 摘要
+ *   - browser_run     : 起一个浏览器会话，顺序执行 steps + asserts，返回结果/自愈/视觉
+ *   - heal_selector   : 给定失效选择器，自愈找回等价元素（返回候选与策略）
+ *   - visual_capture  : 为某页面建立视觉基线（布局指纹）
+ *   - visual_diff     : 与已存视觉基线比对，返回位移/消失/新增 + 严重度
+ *
+ * 注册（~/.workbuddy/mcp.json）：
+ * {
+ *   "mcpServers": {
+ *     "software-verifier": {
+ *       "command": "${SV_NODE:-node}",                                 // 用环境变量 SV_NODE 覆盖 Node 路径
+ *       "args": ["<skill_dir>/mcp-server.cjs"],                        // skill 目录下的 mcp-server.cjs
+ *       "env": { "PW_CORE": "${PW_CORE:-playwright-core 路径}" }      // 用环境变量 PW_CORE 覆盖 playwright-core 路径
+ *     }
+ *   }
+ * }
+ *
+ * 日志一律走 stderr，绝不写 stdout（避免污染 JSON-RPC 协议流）。
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const readline = require('readline');
+const { spawn } = require('child_process');
+
+const SKILL_DIR = __dirname;
+
+// 版本号唯一真源：从 SKILL.md frontmatter 读取，根除 serverInfo.version 与文档长期漂移
+// （此前硬编码，而 SKILL.md 已到 1.4.x）。v1.4.2 起生效。
+function skillVersion() {
+  try {
+    const md = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    const m = md.match(/^version:\s*([0-9][0-9.]*)\s*$/m);
+    return m ? m[1] : '0.0.0';
+  } catch (e) { return '0.0.0'; }
+}
+
+// 自动定位 playwright-core（源码内零硬编码路径）：
+//   env PW_CORE → require.resolve → 与当前 node 同级 / WorkBuddy 托管各版本 / 全局 npm → 明确报错
+function resolvePwCore() {
+  if (process.env.PW_CORE) return process.env.PW_CORE;
+  for (const base of [SKILL_DIR, process.cwd(), path.dirname(process.execPath)].filter(Boolean)) {
+    try { const p = require.resolve('playwright-core', { paths: [base] }); if (p) return p; } catch (e) {}
+  }
+  const cands = [path.join(path.dirname(process.execPath), 'node_modules', 'playwright-core')];
+  try {
+    const binRoot = path.join(os.homedir(), '.workbuddy', 'binaries', 'node', 'versions');
+    for (const v of fs.readdirSync(binRoot)) cands.push(path.join(binRoot, v, 'node_modules', 'playwright-core'));
+  } catch (e) {}
+  try {
+    const out = require('child_process').execSync('npm root -g', { encoding: 'utf8' }).trim().split(/\r?\n/);
+    for (const gr of out) cands.push(path.join(gr, 'playwright-core'));
+  } catch (e) {}
+  for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
+  throw new Error(
+    '[software-verifier] 未找到 playwright-core。请任选其一：\n' +
+    '  (a) 设环境变量 PW_CORE=<node_modules/playwright-core 的绝对路径>\n' +
+    '  (b) 在 skill 目录安装依赖：npm i playwright-core'
+  );
+}
+
+// 自动定位 node：env SV_NODE → 当前正在运行的 node（process.execPath，最可靠）→ PATH 上的 node
+function resolveNode() {
+  if (process.env.SV_NODE) return process.env.SV_NODE;
+  return process.execPath || 'node';
+}
+
+const log = (...a) => process.stderr.write('[mcp] ' + a.join(' ') + '\n');
+
+const { makeDomDriver } = require(path.join(SKILL_DIR, 'drivers', 'dom.js'));
+const { healClickSel, healFillSel } = require(path.join(SKILL_DIR, 'drivers', 'heal.cjs'));
+const { runStep, runAssert } = require(path.join(SKILL_DIR, 'engine.cjs'));
+const visual = require(path.join(SKILL_DIR, 'drivers', 'visual.cjs'));
+const { connect } = require(path.join(SKILL_DIR, 'mcp-client.cjs'));
+
+// 最近一次 verify_run 产出的报告路径（MCP resources 暴露用）
+let lastReportMd = null;
+let lastReportJson = null;
+
+const TOOLS = [
+  {
+    name: 'verify_run', description: '运行一次完整功能验证（复用 verify.cjs 引擎），返回 result.json 摘要。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        specPath: { type: 'string', description: 'spec.json 绝对路径' },
+        url: { type: 'string', description: '被测软件 baseUrl' },
+        driver: { type: 'string', enum: ['browser', 'electron', 'miniprogram', 'appium'] },
+        uiOnly: { type: 'boolean' }, ai: { type: 'boolean' },
+        only: { type: 'string', description: '逗号分隔的功能 ID' }, also: { type: 'string' }
+      },
+      required: ['specPath', 'url']
+    }
+  },
+  {
+    name: 'verify_skill', description: '验证「另一个 skill」的文档化功能：在 skill 目录放 verify-spec.json（同 spec.json 结构），本工具自动定位并对 baseUrl 跑完整验证，返回 result.json 摘要。是「software-verifier 验证其他 skill」的核心入口。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skillDir: { type: 'string', description: '目标 skill 目录绝对路径（含 verify-spec.json 或 spec.json）' },
+        url: { type: 'string', description: '被测软件 baseUrl' },
+        driver: { type: 'string', enum: ['browser', 'electron', 'miniprogram', 'appium'] },
+        uiOnly: { type: 'boolean' }, ai: { type: 'boolean' },
+        only: { type: 'string' }, also: { type: 'string' }, allowApi: { type: 'boolean', description: '允许步骤/断言访问网络（api/openapi 验证需要）' }
+      },
+      required: ['skillDir', 'url']
+    }
+  },
+  {
+    name: 'browser_run', description: '起一个浏览器会话，顺序执行 steps + asserts，返回每步结果、自愈与视觉变化。无需 spec 文件。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }, driver: { type: 'string', enum: ['browser', 'electron'] },
+        steps: { type: 'array', description: '步骤 DSL 数组（同 SKILL.md steps）' },
+        asserts: { type: 'array', description: '断言数组（同 SKILL.md asserts）' },
+        sel: { type: 'string', description: '可选：关注这些选择器的视觉指纹' }
+      },
+      required: ['url']
+    }
+  },
+  {
+    name: 'heal_selector', description: '给定失效的 CSS 选择器，用稳定信号自愈找回等价元素。返回候选策略与是否成功。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }, sel: { type: 'string', description: '失效的选择器' },
+        action: { type: 'string', enum: ['click', 'fill'] }, value: { type: 'string', description: 'action=fill 时填的值' }
+      },
+      required: ['url', 'sel']
+    }
+  },
+  {
+    name: 'visual_capture', description: '为当前页面建立视觉基线（DOM 布局指纹，零依赖）。',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' }, name: { type: 'string', description: '基线名（任意，作为基线 key）' }, sel: { type: 'string' } },
+      required: ['url', 'name']
+    }
+  },
+  {
+    name: 'visual_diff', description: '与已存视觉基线比对，返回 moved/disappeared/appeared 与 severity。',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' }, name: { type: 'string' }, sel: { type: 'string' }, moveThreshold: { type: 'number' } },
+      required: ['url', 'name']
+    }
+  },
+  {
+    name: 'verify_mcp', description: '连接另一个 MCP server，按 spec 做契约/行为级验收：核对工具清单、调用工具并校验返回（contains/noError），输出 ✅/❌ 报告。纯本机零依赖，是「我们的 skill 检查其他 MCP」的核心入口。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        targetServer: { type: 'object', description: '目标 MCP server 启动信息 {command, args, env}' },
+        spec: { type: 'object', description: '验收规格 {tools:[{name, args?, expect?:{exists?,contains?,noError?}}], visual?}' },
+        timeout: { type: 'number', description: '单次调用超时 ms（默认 30000）' }
+      },
+      required: ['targetServer', 'spec']
+    }
+  }
+];
+
+// ---------- 浏览器会话辅助 ----------
+async function withBrowser(url, fn) {
+  const drv = makeDomDriver('browser', resolvePwCore());
+  let page;
+  try {
+    const r = await drv.launch({});
+    page = r.page;
+    await drv.goto(url);
+    await drv.wait(800);
+    return await fn(drv, page);
+  } finally {
+    if (drv) await drv.close().catch(() => {});
+  }
+}
+
+function visualBase(app, name) {
+  return path.join(SKILL_DIR, 'evolution', 'visual-baselines', (app + '_' + name).replace(/[^\w一-龥]/g, '_').slice(0, 80) + '.json');
+}
+
+// ---------- 工具分发 ----------
+async function handleTool(params, id) {
+  try {
+    const name = params.name;
+    const args = params.arguments || {};
+    if (name === 'verify_run') {
+      const out = path.join(path.dirname(args.specPath), 'verify_report');
+      const cli = [path.join(SKILL_DIR, 'verify.cjs'), '--spec', args.specPath, '--url', args.url, '--out', out];
+      if (args.driver) cli.push('--driver', args.driver);
+      if (args.uiOnly) cli.push('--ui-only');
+      if (args.ai) cli.push('--ai', 'on');
+      if (args.only) cli.push('--only', args.only);
+      if (args.also) cli.push('--also', args.also);
+      await runChild(cli);
+      const resultJsonPath = path.join(out, 'result.json');
+      const result = JSON.parse(fs.readFileSync(resultJsonPath, 'utf8'));
+      lastReportJson = resultJsonPath;
+      lastReportMd = path.join(out, 'VERIFY-报告.md');
+      return ok(id, { summary: result.summary, healTotal: result.healTotal || 0, features: (result.features || []).map(f => ({ id: f.id, name: f.name, pass: f.pass, errors: f.errors })) });
+    }
+    if (name === 'verify_skill') {
+      if (!args.skillDir) return ok(id, { ok: false, error: 'missing-skillDir' });
+      const specCand = [path.join(args.skillDir, 'verify-spec.json'), path.join(args.skillDir, 'spec.json')];
+      let specPath = null;
+      for (const c of specCand) { if (fs.existsSync(c)) { specPath = c; break; } }
+      if (!specPath) return ok(id, { ok: false, error: 'no-spec', hint: 'skill 目录需含 verify-spec.json 或 spec.json: ' + args.skillDir });
+      const out = path.join(args.skillDir, 'verify_report');
+      const cli = [path.join(SKILL_DIR, 'verify.cjs'), '--spec', specPath, '--url', args.url, '--out', out];
+      if (args.driver) cli.push('--driver', args.driver);
+      if (args.uiOnly) cli.push('--ui-only');
+      if (args.ai) cli.push('--ai', 'on');
+      if (args.only) cli.push('--only', args.only);
+      if (args.also) cli.push('--also', args.also);
+      if (args.allowApi) cli.push('--allow-api');
+      await runChild(cli);
+      const resultJsonPath = path.join(out, 'result.json');
+      const result = JSON.parse(fs.readFileSync(resultJsonPath, 'utf8'));
+      lastReportJson = resultJsonPath;
+      lastReportMd = path.join(out, 'VERIFY-报告.md');
+      return ok(id, { summary: result.summary, healTotal: result.healTotal || 0, features: (result.features || []).map(f => ({ id: f.id, name: f.name, pass: f.pass, errors: f.errors })) });
+    }
+    if (name === 'browser_run') {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-mcp-'));
+      const SHOTS = path.join(tmp, 'shots'); fs.mkdirSync(SHOTS, { recursive: true });
+      const BASE = (args.url || '').replace(/\/$/, '');
+      const ctx = { BASE, SHOTS, SKILL_DIR, visualBase: (n) => visualBase('mcp', n), allowApi: !!args.allowApi };
+      const res = await withBrowser(args.url, async (drv) => {
+        const steps = [];
+        for (const s of (args.steps || [])) { const r = await runStep(drv, s, ctx); steps.push({ do: s.do, ...r }); }
+        const asserts = [];
+        for (const a of (args.asserts || [])) { const ar = await runAssert(drv, a, ctx); asserts.push({ desc: a.desc || a.sel || a.eval || a.includes || a.visual || '', ...ar }); }
+        return { steps, asserts, heals: drv.heals.slice() };
+      });
+      return ok(id, res);
+    }
+    if (name === 'heal_selector') {
+      const r = await withBrowser(args.url, async (drv, page) => {
+        const h = args.action === 'fill'
+          ? await healFillSel(page, args.sel, args.value || '')
+          : await healClickSel(page, args.sel, 0);
+        return h;
+      });
+      return ok(id, r);
+    }
+    if (name === 'visual_capture') {
+      const bp = visualBase('mcp', args.name);
+      const r = await withBrowser(args.url, async (drv) => {
+        const cur = await drv.visualCapture({ sel: args.sel });
+        fs.mkdirSync(path.dirname(bp), { recursive: true });
+        fs.writeFileSync(bp, JSON.stringify(cur));
+        return { elements: cur.n, baseline: bp };
+      });
+      return ok(id, r);
+    }
+    if (name === 'visual_diff') {
+      const bp = visualBase('mcp', args.name);
+      if (!fs.existsSync(bp)) return ok(id, { ok: false, error: 'no-baseline', hint: '请先用 visual_capture 建立基线: ' + args.name });
+      const r = await withBrowser(args.url, async (drv) => {
+        const cur = await drv.visualCapture({ sel: args.sel });
+        const base = JSON.parse(fs.readFileSync(bp, 'utf8'));
+        return drv.visualDiff(base, cur, { moveThreshold: args.moveThreshold || 12 });
+      });
+      return ok(id, r);
+    }
+    if (name === 'verify_mcp') {
+      const ts = args.targetServer || {};
+      if (!ts.command) return ok(id, { ok: false, error: 'missing-targetServer.command' });
+      const c = connect({ command: ts.command, args: ts.args || [], env: ts.env || {} }, { timeout: args.timeout || 30000 });
+      try {
+        await c.initialize();
+        const tools = await c.listTools();
+        const toolNames = tools.map(t => t.name);
+        const spec = args.spec || {};
+        const wantTools = spec.tools || [];
+        const missing = wantTools.filter(w => !toolNames.includes(typeof w === 'string' ? w : w.name));
+        const calls = [];
+        for (const w of wantTools) {
+          const tname = typeof w === 'string' ? w : w.name;
+          const expect = typeof w === 'string' ? {} : (w.expect || {});
+          if (expect.exists === true) { calls.push({ name: tname, checked: 'exists', ok: toolNames.includes(tname) }); continue; }
+          try {
+            const r = await c.callTool(tname, (typeof w === 'string' ? {} : (w.args || {})));
+            const txt = JSON.stringify(r.content || r);
+            let okCall = true, detail = 'called';
+            if (expect.contains) { okCall = txt.includes(expect.contains); detail = 'contains "' + expect.contains + '"=' + okCall; }
+            if (expect.noError) { const hasErr = r.isError === true || txt.includes('"isError":true'); okCall = okCall && !hasErr; detail = 'noError=' + (!hasErr); }
+            calls.push({ name: tname, ok: okCall, detail });
+          } catch (e) { calls.push({ name: tname, ok: false, detail: 'call-failed: ' + e.message }); }
+        }
+        const visual = spec.visual ? { skipped: true, reason: '视觉叠加需目标工具返回可截图页面；verify_mcp 当前以结构化契约验收为主，视觉层由 software-verifier 浏览器驱动按需触发' } : null;
+        const pass = missing.length === 0 && calls.every(x => x.ok !== false);
+        return ok(id, { ok: true, target: ts.command + ' ' + (ts.args || []).join(' '), toolsFound: toolNames.length, toolsMissing: missing, calls, visual, pass, summary: { total: wantTools.length, missing: missing.length, failCalls: calls.filter(x => x.ok === false).length } });
+      } finally { c.close(); }
+    }
+    return err(id, -32602, '未知工具: ' + name);
+  } catch (e) {
+    return err(id, -32603, (e && e.message) || String(e));
+  }
+}
+
+function runChild(cli) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(resolveNode(), cli, { env: Object.assign({}, process.env, { PW_CORE: resolvePwCore() }), stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', er = '';
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => er += d);
+    // 退出码语义（v1.4.2）：0=全部通过、1=验证完成但存在未通过功能点 —— 二者都属"正常完成"，
+// 结果是数据（已落 result.json）而非工具错误；仅 2（参数/用法错误）或异常终止才算执行失败。
+p.on('close', code => { if (code === 0 || code === 1) resolve(out); else reject(new Error('verify_run 退出码 ' + code + '\n' + er.slice(0, 800))); });
+  });
+}
+
+function ok(id, data) { send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] } }); }
+function err(id, code, message) { send({ jsonrpc: '2.0', id, error: { code, message } }); }
+
+function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
+
+// ---------- JSON-RPC 主循环 ----------
+const rl = readline.createInterface({ input: process.stdin, terminal: false });
+rl.on('line', async (line) => {
+  const t = line.trim();
+  if (!t) return;
+  let req;
+  try { req = JSON.parse(t); } catch (e) { return; }
+  const id = req.id;
+  if (req.method === 'initialize') {
+    return send({ jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {}, resources: { listChanged: false } }, serverInfo: { name: 'software-verifier', version: skillVersion() } } });
+  }
+  if (req.method === 'notifications/initialized') return; // 通知，无回复
+  if (req.method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
+  if (req.method === 'tools/list') return send({ jsonrpc: '2.0', id, result: { tools: TOOLS } });
+  if (req.method === 'tools/call') return handleTool(req.params, id);
+  if (req.method === 'resources/list') {
+    const list = [];
+    if (lastReportJson) list.push({ uri: 'software-verifier://report/latest', name: '最新验证报告 (result.json)', mimeType: 'application/json', description: '最近一次 verify_run 产出的 result.json 全量结果' });
+    if (lastReportMd) list.push({ uri: 'software-verifier://report/latest.md', name: '最新验证报告 (VERIFY-报告.md)', mimeType: 'text/markdown', description: '最近一次 verify_run 产出的 Markdown 报告' });
+    return send({ jsonrpc: '2.0', id, result: { resources: list } });
+  }
+  if (req.method === 'resources/read') {
+    const uri = (req.params && req.params.uri) || '';
+    let fp = null;
+    if (uri === 'software-verifier://report/latest') fp = lastReportJson;
+    else if (uri === 'software-verifier://report/latest.md') fp = lastReportMd;
+    if (!fp || !fs.existsSync(fp)) return send({ jsonrpc: '2.0', id, error: { code: -32602, message: '尚无验证报告，请先调用 verify_run' } });
+    const mime = fp.endsWith('.md') ? 'text/markdown' : (fp.endsWith('.json') ? 'application/json' : 'text/plain');
+    return send({ jsonrpc: '2.0', id, result: { contents: [{ uri, mimeType: mime, text: fs.readFileSync(fp, 'utf8') }] } });
+  }
+  if (id != null) send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found: ' + req.method } });
+});
+rl.on('close', () => process.exit(0));
+log('software-verifier MCP server 已启动（stdio）。');
