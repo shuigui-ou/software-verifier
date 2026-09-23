@@ -1,0 +1,29 @@
+# 运行时生成 / 本地日志（非源码）
+evolution/learnings.jsonl
+evolution/evolution.md
+*.log
+
+# 依赖（按需安装，不随仓库）
+node_modules/
+
+# 验证产物（按需生成）
+verify_report/
+shots/
+
+# 系统
+.DS_Store
+
+# 发版脚本临时产物（release.cjs 生成的 Release notes，勿入库）
+RELEASE_NOTES_tmp.md
+*.tmp.md
+
+# 回流本地状态（不入库，纯本机）
+evolution/last-evolution.json
+evolution/contrib-ledger.json
+evolution/contrib/
+
+# 视觉基线（本机本地指纹，不入库）
+evolution/visual-baselines/
+
+# 进化内核机器数据（审计链/账本/信号/快照，纯本机运行期产物，不入库）
+.evolution/
