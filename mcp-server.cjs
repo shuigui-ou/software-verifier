@@ -97,7 +97,9 @@ const TOOLS = [
         url: { type: 'string', description: '被测软件 baseUrl' },
         driver: { type: 'string', enum: ['browser', 'electron', 'miniprogram', 'appium'] },
         uiOnly: { type: 'boolean' }, ai: { type: 'boolean' },
-        only: { type: 'string', description: '逗号分隔的功能 ID' }, also: { type: 'string' }
+        only: { type: 'string', description: '逗号分隔的功能 ID（正选择）' }, also: { type: 'string' },
+        exclude: { type: 'string', description: '逗号分隔的功能 ID（负选择，从选中集合里剔除）' },
+        ablate: { type: 'string', description: '受控消融：留一法 k，如 1；留空则不消融。会另起独立子进程逐组验证' }
       },
       required: ['specPath', 'url']
     }
@@ -111,7 +113,10 @@ const TOOLS = [
         url: { type: 'string', description: '被测软件 baseUrl' },
         driver: { type: 'string', enum: ['browser', 'electron', 'miniprogram', 'appium'] },
         uiOnly: { type: 'boolean' }, ai: { type: 'boolean' },
-        only: { type: 'string' }, also: { type: 'string' }, allowApi: { type: 'boolean', description: '允许步骤/断言访问网络（api/openapi 验证需要）' }
+        only: { type: 'string' }, also: { type: 'string' },
+        exclude: { type: 'string', description: '逗号分隔的功能 ID（负选择）' },
+        ablate: { type: 'string', description: '受控消融：留一法 k，如 1；留空则不消融' },
+        allowApi: { type: 'boolean', description: '允许步骤/断言访问网络（api/openapi 验证需要）' }
       },
       required: ['skillDir', 'url']
     }
@@ -202,6 +207,8 @@ async function handleTool(params, id) {
       if (args.ai) cli.push('--ai', 'on');
       if (args.only) cli.push('--only', args.only);
       if (args.also) cli.push('--also', args.also);
+      if (args.exclude) cli.push('--exclude', args.exclude);
+      if (args.ablate) cli.push('--ablate', String(args.ablate));
       await runChild(cli);
       const resultJsonPath = path.join(out, 'result.json');
       const result = JSON.parse(fs.readFileSync(resultJsonPath, 'utf8'));
@@ -222,6 +229,8 @@ async function handleTool(params, id) {
       if (args.ai) cli.push('--ai', 'on');
       if (args.only) cli.push('--only', args.only);
       if (args.also) cli.push('--also', args.also);
+      if (args.exclude) cli.push('--exclude', args.exclude);
+      if (args.ablate) cli.push('--ablate', String(args.ablate));
       if (args.allowApi) cli.push('--allow-api');
       await runChild(cli);
       const resultJsonPath = path.join(out, 'result.json');
