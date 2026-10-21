@@ -246,31 +246,93 @@ function sealQuestioning(session) {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * 读宿主执行日志（ledger.jsonl / audit.jsonl）。
- * 只认**实际存在的记录**——这是「抓造假」的唯一依据。
+ * 读宿主执行日志。
+ *
+ * ⚠ **数据源有两个，别只读一个**（2026-10-21 实测踩坑修正）：
+ *   ① **result.json** ← 真正的执行证据。每个功能点带 id/name/pass/errors/
+ *      screenshot/steps/asserts。这才是「这个测试点到底跑没跑」的权威依据。
+ *   ② **ledger.jsonl / audit.jsonl** ← 内核账本，但里面**只有落差与错误**
+ *      （error/expectation/plan/thread），**没有「功能点执行成功」的记录**。
+ *
+ *  初版只读 ledger → 在真实项目上把 34 个**确实测过**的功能点全判成 dangling
+ *  （假阳性率 100%）。教训：**先验数据源里到底有什么，别凭字段名猜。**
+ *
+ * @param dataDir  内核数据目录（.evolution）
+ * @param resultPath result.json 路径（通常在 verify_report/ 下），可选
  */
-function readExecutionLog(dataDir) {
-  const out = { ledger: [], audit: [], available: false, reason: null };
+function readExecutionLog(dataDir, resultPath) {
+  const out = { ledger: [], audit: [], results: [], available: false, reason: null };
   try {
+    // ① result.json —— 执行证据主源
+    const rp = resultPath || guessResultPath(dataDir);
+    if (rp && fs.existsSync(rp)) {
+      try {
+        const rj = JSON.parse(fs.readFileSync(rp, 'utf8'));
+        const fs_ = Array.isArray(rj.features) ? rj.features
+                   : Array.isArray(rj.results) ? rj.results
+                   : Array.isArray(rj) ? rj : [];
+        out.results = fs_.map((f) => ({
+          id: f.id || '',
+          name: String(f.name || f.title || ''),
+          pass: f.pass !== false,
+          errors: Array.isArray(f.errors) ? f.errors.length : 0,
+          screenshot: f.screenshot || '',
+          ran: true,
+        }));
+        out.resultPath = rp;
+      } catch (e) {
+        out.reason = 'result_parse_failed: ' + String(e && e.message || e);
+      }
+    }
+
+    // ② ledger / audit —— 落差证据辅源
     const lp = path.join(dataDir, 'ledger', 'ledger.jsonl');
     const ap = path.join(dataDir, 'audit', 'audit.jsonl');
     if (fs.existsSync(lp)) {
       out.ledger = fs.readFileSync(lp, 'utf8').split('\n')
         .filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } })
         .filter(Boolean);
-      out.available = true;
-    } else {
-      out.reason = 'ledger_missing';
     }
     if (fs.existsSync(ap)) {
       out.audit = fs.readFileSync(ap, 'utf8').split('\n')
         .filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } })
         .filter(Boolean);
     }
+    out.available = out.results.length > 0 || out.ledger.length > 0;
+    // ⚠ 如实区分两种「有日志」：
+    //   · 有 result.json → 有真正的**功能点执行证据**
+    //   · 只有 ledger    → 只有**落差/错误**记录，**不能证明功能点跑过**
+    // 不区分会让「只有 ledger」被误当成「跑过了」，等于放过造假。
+    if (out.results.length > 0) out.evidenceKind = 'feature_results';
+    else if (out.ledger.length > 0) out.evidenceKind = 'gaps_only';
+    else { out.evidenceKind = 'none'; if (!out.reason) out.reason = 'no_log_source'; }
   } catch (e) {
     out.reason = String(e && e.message || e);
   }
   return out;
+}
+
+/** 在 dataDir 的常见位置找 result.json（宿主输出目录通常是 verify_report/） */
+function guessResultPath(dataDir) {
+  const cands = [];
+  const parent = path.dirname(dataDir || '');
+  const gparent = path.dirname(parent || '');
+  const bases = [dataDir, parent, gparent, __dirname].filter(Boolean);
+  for (const b of bases) {
+    cands.push(path.join(b, 'verify_report', 'result.json'));
+    cands.push(path.join(b, 'result.json'));
+  }
+  // 从 dataDir 逐级向上找三层
+  let d = dataDir;
+  for (let i = 0; i < 3 && d; i++) {
+    cands.push(path.join(d, 'verify_report', 'result.json'));
+    cands.push(path.join(d, 'result.json'));
+    d = path.dirname(d);
+  }
+  for (const c of cands) {
+    try { if (fs.existsSync(c)) return c; } catch (_) { /* ignore */ }
+  }
+  return null;
 }
 
 /**
@@ -310,6 +372,20 @@ function reconcile(session, execLog, opts) {
     };
 
     const items = (session && session.items) || [];
+
+    // ① result.json —— 功能点执行证据主源（按 name 精确/包含匹配）
+    for (const r of (log.results || [])) {
+      const nm = String(r.name || '').toLowerCase();
+      if (!nm) continue;
+      for (const it of items) {
+        const desc = String(it.description || '').toLowerCase();
+        if (!desc) continue;
+        if (nm === desc || nm.includes(desc) || (desc.length >= 4 && desc.includes(nm))) {
+          executed.add(it.id);
+        }
+      }
+    }
+    // ② ledger / audit —— 辅源
     for (const e of (log.ledger || [])) {
       const hay = `${e.title || ''} ${e.detail || ''}`;
       for (const it of items) if (matchOne(hay, it)) executed.add(it.id);
