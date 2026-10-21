@@ -292,6 +292,29 @@ check('7.2 无 package.json 依赖声明被修改', () => {
     '宿主 package.json 被加了依赖');
 });
 
+// ═══ 补充：默认开启语义 ══════════════════════════════════════
+// 三条是「默认开启」的安全基础，缺一不可。
+// 背景：2026-10-21 用户质疑「不开启还有什么意义」，据此把默认从关闭改为开启。
+console.log('\n[补充] 默认开启：没声明契约不介入 / 声明了必须对账');
+
+check('未起会话（session=null）→ REJECT（不放行）', () => {
+  const r = C.reconcile(null, { ledger: [], audit: [] }, {});
+  assert.strictEqual(r.verdict, 'REJECT');
+});
+check('起了会话但没声明契约 → NOT_APPLICABLE（不拦）', () => {
+  const s = C.createQuestioning({ initial: [] });
+  const r = C.reconcile(s, { ledger: [], audit: [] }, {});
+  assert.strictEqual(r.verdict, 'NOT_APPLICABLE');
+  assert.strictEqual(C.gate(s, r).allow, true, '未声明契约不该拦');
+});
+check('声明了契约但没执行 → REJECT（监督的价值所在）', () => {
+  const s = C.createQuestioning({ initial: ['并发登录幂等性', '特殊字符注入'] });
+  const r = C.reconcile(s, { ledger: [], audit: [] }, {});
+  assert.strictEqual(r.verdict, 'REJECT');
+  assert.strictEqual(r.dangling, 2);
+  assert.strictEqual(C.gate(s, r).allow, false);
+});
+
 // ── 输出 ────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(70));
 for (const [st, name] of results) {
