@@ -27,3 +27,17 @@ evolution/visual-baselines/
 
 # 进化内核机器数据（审计链/账本/信号/快照，纯本机运行期产物，不入库）
 .evolution/
+
+# 补丁/备份残留（绝不进仓库，更绝不进市场包）
+*.bak
+*.bak_*
+*.orig
+*.old
+*.tmp
+
+# 发布包产物
+*.zip
+
+# Python 缓存（打包/编辑过程残留）
+__pycache__/
+*.pyc
