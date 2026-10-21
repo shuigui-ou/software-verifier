@@ -52,17 +52,26 @@ function getDataDir(host) {
  * @param {object} opts
  *   initial : string[]  初始验证计划
  *   host    : object    evolution-host.cjs 模块（可传，缺失则不写 tapPlan）
- *   enable  : boolean   默认 **false** —— 监督默认关闭，由使用者显式开启。
- *              理由：它会改变报告内容与落盘行为，属于使用者决策而非默认行为。
+ *   enable  : boolean   默认 **true**（与宿主 evolution.yaml 的 enabled:true 一致）。
+ *              传 false 可显式关闭。安全由「未声明契约不介入」保证，而非默认关。
  * @returns session 或 {enabled:false, reason}
  */
 function start(opts) {
   const o = opts || {};
   try {
-    // ⚠ 必须 **显式 enable:true** 才开。写成 `o.enable === false` 会让
-    //   「不传 enable」也走到开启分支 —— 默认关闭形同虚设
-    //   （实测踩过：start({initial:['x']}) 未带 enable 却返回 __enabled:true）。
-    if (o.enable !== true) return { enabled: false, reason: 'disabled_by_default' };
+    // ── 默认开启（2026-10-21 修正，此前是默认关闭）──────────────────
+    // 为什么改：宿主 evolution.yaml 对内核是 `enabled: true`，
+    //   插件却默认关闭 = **装了等于没装**。用户加了它却看不到任何效果，
+    //   反而会得出「这东西没用」的结论 —— 那是最坏的结果。
+    //
+    // 安全性不靠「默认关」，而靠两道防线：
+    //   ① 没起会话（session 为 null）→ 对账判 REJECT，绝不放行
+    //   ② 起了会话但还没声明契约 → NOT_APPLICABLE，不拦
+    //   换言之：**没声明过测试点就不介入，一旦声明就必须对账**。
+    //   这才是符合直觉的语义，也与宿主惯例一致。
+    //
+    // 显式关闭仍然可用：enable: false。
+    if (o.enable === false) return { enabled: false, reason: 'disabled_by_caller' };
     const core = loadCore();
     if (!core) return { enabled: false, reason: 'plugin_missing' };
 
@@ -163,7 +172,7 @@ function status() {
     driverPresent: fs.existsSync(path.join(__dirname, 'drivers', 'no-lazy-supervisor.cjs')),
     categories: core ? core.CATEGORIES.map((c) => c.name) : [],
     limits: core ? core.DEFAULT_LIMITS : null,
-    note: '默认关闭；需 start({enable:true}) 才会影响报告',
+    note: '默认开启；未声明契约时不介入。显式关闭用 enable:false',
   };
 }
 
