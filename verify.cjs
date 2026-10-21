@@ -13,7 +13,8 @@
  *
  * 用法：
  *   node verify.cjs --spec <spec.json> --url http://localhost:3000 [--driver browser]
- *                   [--ui-only] [--also F04,F16] [--only F01,F02] [--ai on]
+ *                   [--ui-only] [--also F04,F16] [--only F01,F02] [--exclude F01] [--ai on]
+ *                   [--ablate[=k]] [--ablate-out <dir>]
  *                   [--app <path>] [--platform android|ios] [--caps <caps.json>]
  *
  * spec 结构见 SKILL.md。引擎与具体软件解耦：换软件只需换 spec；换运行环境只需换 --driver。
@@ -52,7 +53,8 @@ function resolvePwCore() {
 // ---------- 参数解析 ----------
 const args = process.argv.slice(2);
 const opt = {
-  spec: null, url: null, out: null, uiOnly: false, also: [], only: [], ai: 'off',
+  spec: null, url: null, out: null, uiOnly: false, also: [], only: [], exclude: [],
+  ablate: 0, ablationOut: null, ai: 'off',
   driver: 'browser', app: null, platform: 'android', caps: null,
   appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true, evolve: false,
   skill: null, strictEnv: false, allowApi: false,
@@ -66,6 +68,14 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--ui-only') opt.uiOnly = true;
   else if (a === '--also') opt.also = args[++i].split(',').map(s => s.trim());
   else if (a === '--only') opt.only = args[++i].split(',').map(s => s.trim());
+  // v1.4.6：受控消融（Controlled Ablation）——「去掉 A 后 BCD 怎样、去掉 B 后 ACD 怎样」
+  //   --exclude <ids>     负选择：在正选择（--only / --ui-only / --also）之后做减法
+  //   --ablate[=k]        留一法消融：基线 1 次 + 每次去掉 k 个因子（默认 k=1）；k>=全部功能点数时无意义
+  //   --ablate-out <dir>  消融产物目录（默认 <out>/ablation）
+  else if (a.indexOf('--ablate=') === 0) opt.ablate = parseInt(a.split('=')[1], 10) || 1;
+  else if (a === '--ablate-out') opt.ablationOut = args[++i];
+  else if (a === '--ablate') { const nx = args[i + 1]; if (nx && nx.charAt(0) !== '-') { opt.ablate = parseInt(nx, 10); i++; } else opt.ablate = 1; }
+  else if (a === '--exclude') opt.exclude = args[++i].split(',').map(s => s.trim()).filter(Boolean);
   else if (a === '--ai') opt.ai = args[++i];
   else if (a === '--driver') opt.driver = args[++i];
   else if (a === '--app') opt.app = args[++i];
@@ -99,7 +109,7 @@ if (!opt.spec && opt.skill) {
 }
 
 if (!opt.spec || !opt.url) {
-  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--skill <skill目录> 自动定位 spec] [--driver browser|electron|miniprogram|appium] [--out <dir>] [--evolve on] [--strict-env（把环境噪声也计入 FAIL）] [--allow-api（显式开启 api/openapi 网络步骤与断言）]');
+  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--skill <skill目录> 自动定位 spec] [--driver browser|electron|miniprogram|appium] [--out <dir>] [--evolve on] [--strict-env（把环境噪声也计入 FAIL）] [--allow-api（显式开启 api/openapi 网络步骤与断言）] [--exclude <功能ID,...>] [--ablate[=k]（受控消融：基线+去因子）] [--ablate-out <dir>]');
   process.exit(2);
 }
 
@@ -109,6 +119,85 @@ const OUT = opt.out || (path.dirname(opt.spec) + '/verify_report');
 fs.mkdirSync(OUT, { recursive: true });
 const SHOTS = OUT + '/shots';
 fs.mkdirSync(SHOTS, { recursive: true });
+
+// ---------- v1.4.6 受控消融调度器 ----------
+// 每个组合跑**独立子进程**并写独立 --out，避免共享浏览器会话/登录态把各组的结论串味。
+// 产物：<out>/ablation/{ablation.json,ABLATE-报告.md,ABLATE-报告.html}
+const { spawnSync } = require('child_process');
+const ABLATION_PARENT = opt.ablate > 0;
+const RAW_ARGS = process.argv.slice(2);
+function ablateCombos(ids, k) {
+  const out = [];
+  if (!(k > 0) || k >= ids.length) return [];
+  (function rec(start, cur) {
+    if (cur.length === k) { out.push(cur.slice()); return; }
+    for (let i = start; i < ids.length; i++) { cur.push(ids[i]); rec(i + 1, cur); cur.pop(); }
+  })(0, []);
+  return out;
+}
+function ablateChildArgs(excludeIds, outDir) {
+  const out = [];
+  for (let i = 0; i < RAW_ARGS.length; i++) {
+    const a = RAW_ARGS[i];
+    if (a === '--ablate' || a.indexOf('--ablate=') === 0) continue;                        // 调度标记，不传给子层（防递归）
+    if (a === '--ablate-out') { i++; continue; }                                            // 连同取值一起跳过
+    if (a === '--exclude') { i++; out.push('--exclude', excludeIds.join(',')); continue; }
+    if (a.indexOf('--exclude=') === 0) { out.push('--exclude=' + excludeIds.join(',')); continue; }
+    if (a === '--out') { i++; out.push('--out', outDir); continue; }
+    if (a.indexOf('--out=') === 0) { out.push('--out=' + outDir); continue; }
+    out.push(a);
+  }
+  // 消融子层必须**无条件注入** --exclude：父进程自身的 --exclude 只是被改写，不代表本组要排除谁。
+  // （曾漏此注入 → 5 组去因子运行实际全是排除空集，Δ 矩阵全行相同、翻转恒 0，报告却照样生成）
+  if (excludeIds && excludeIds.length) {
+    if (out.indexOf('--exclude') < 0 && !out.some(x => x.indexOf('--exclude=') === 0)) out.push('--exclude', excludeIds.join(','));
+  }
+  if (out.indexOf('--out') < 0 && !out.some(x => x.indexOf('--out=') === 0)) out.push('--out', outDir);
+  return out;
+}
+function runAblation(specObj) {
+  const Abl = require(SKILL_DIR + '/reporters/ablation.cjs');
+  const abOut = path.resolve(opt.ablationOut || (OUT + '/ablation'));
+  fs.mkdirSync(abOut, { recursive: true });
+  const ids = (specObj.features || []).map(f => f.id);
+  const combos = [[]].concat(ablateCombos(ids, opt.ablate));
+  if (combos.length < 2) { console.error('[verify] --ablate：功能点仅 ' + ids.length + ' 个，无法做消融（至少需 2 个）'); process.exitCode = 2; return; }
+  console.log('=== 受控消融（k=' + opt.ablate + '）：基线 1 次 + 去因子 ' + (combos.length - 1) + ' 组 ===');
+  const runs = [];
+  for (const c of combos) {
+    const tag = c.length ? ('minus_' + c.join('_')) : 'baseline';
+    const dir = abOut + '/' + tag;
+    const childArgs = ablateChildArgs(c, dir);
+    console.log('  > [' + tag + '] 排除 ' + (c.length ? c.join(',') : '（无，即基线）') + ' → ' + dir);
+    const r = spawnSync(process.execPath, [SKILL_DIR + '/verify.cjs'].concat(childArgs),
+      { stdio: 'inherit', env: Object.assign({}, process.env, { SV_ABLATION_TAG: tag }) });
+    const rj = dir + '/result.json';
+    if (r.status !== 0 && !fs.existsSync(rj)) console.error('     ! 子进程 exit=' + r.status + ' 且无 result.json，本组跳过');
+    if (fs.existsSync(rj)) { try { runs.push(JSON.parse(fs.readFileSync(rj, 'utf8'))); } catch (e) { console.error('     ! result.json 解析失败：' + (e && e.message)); } }
+  }
+  if (!runs.length) { console.error('[verify] --ablate：无任何一组产出 result.json，不生成消融报告'); process.exitCode = 2; return; }
+  // 护栏：Δ 矩阵必须有信息量。若没有任何一组真正排除了功能点，报告会是「各行相同、翻转恒 0」的假结论，
+  // 与其产出看似正常的空报告，不如直接失败（宁可报错，不可静默失真）。
+  if (!runs.some(x => x.exclude && x.exclude.length)) {
+    console.error('[verify] --ablate：没有任何一组真正排除了功能点（各组 exclude 均为空）——Δ 矩阵将无信息量，已中止、不产出报告。');
+    process.exitCode = 2; return;
+  }
+  const d = Abl.build(runs, specObj);
+  fs.writeFileSync(abOut + '/ablation.json', JSON.stringify(d, null, 2));
+  fs.writeFileSync(abOut + '/ABLATE-报告.md', Abl.renderMarkdown(d));
+  fs.writeFileSync(abOut + '/ABLATE-报告.html', Abl.renderHtml(d));
+  const s = d.summary;
+  console.log('');
+  console.log('========== 消融汇总: 基线 ' + s.baseline.pass + '/' + s.baseline.total + ' 通过 · 翻转 ' + s.flipCount + ' 处' +
+    (s.suspectCount ? '（含假消融嫌疑 ' + s.suspectCount + '）' : '') + ' ==========');
+  for (const f of d.flips) console.log('   * 去掉 ' + f.excluded + ' -> ' + f.feature + ' ' + f.direction + (f.suspect ? '   [!]假消融嫌疑' : ''));
+  if (!d.flips.length) console.log('   . 未观察到翻转：各因子独立（去掉任一均不改变其余功能点状态）');
+  console.log('消融报告已写入: ' + abOut);
+  // 退出码跟随基线结果：消融不改写「通过与否」的判定，只补充因子贡献信息
+  const base = runs.filter(x => !(x.exclude && x.exclude.length))[0] || runs[0];
+  if (base && base.summary) process.exitCode = base.summary.fail > 0 ? 1 : 0;
+}
+if (ABLATION_PARENT) runAblation(spec);
 
 const log = (...a) => console.log(...a);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -170,6 +259,8 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
 
 // ---------- 主流程 ----------
 (async () => {
+  // v1.4.6：--ablate 时本进程仅作消融调度器，验证由分派出的独立子进程完成
+  if (ABLATION_PARENT) { console.log('[verify] --ablate：本进程作为消融调度器，主流程不重复执行'); return; }
   let result = { name: spec.name || spec.app || '未知软件', baseUrl: BASE, driver: opt.driver, startedAt: new Date().toISOString(), features: [] };
   let drv;
   const errors = []; // 全局错误（最终汇总）
@@ -243,6 +334,15 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
       selected = selected.concat(extra);
     }
     if (opt.ai === 'on') selected = spec.features;
+    // v1.4.6：--exclude 负选择——在正选择之后做减法（--only A,B --exclude A 等价于只跑 B）
+    if (opt.exclude.length) {
+      const known = spec.features.map(f => f.id);
+      const mis = opt.exclude.filter(id => known.indexOf(id) < 0);
+      if (mis.length) log('   ! --exclude 指定了不存在的功能点: ' + mis.join(',') + '（已忽略）');
+      const ex = opt.exclude.filter(id => known.indexOf(id) >= 0);
+      selected = selected.filter(f => ex.indexOf(f.id) < 0);
+      if (!selected.length) log('   ! 排除后无功能点可验证（--exclude ' + ex.join(',') + '）');
+    }
 
     log('将验证 ' + selected.length + ' / ' + spec.features.length + ' 个功能点\n');
 
@@ -316,6 +416,10 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
       result.features.push(frec);
     }
 
+    // v1.4.6：消融对照需要知道「这次跑了谁、没跑谁」。被排除的点在此次根本不存在，
+    // 其状态在消融矩阵里记 null（显示为 —），既不判为一致、也不判为翻转。
+    result.tag = process.env.SV_ABLATION_TAG || 'single';
+    result.exclude = opt.exclude.slice();
     result.endedAt = new Date().toISOString();
     result.totalErrors = errors;
     result.healTotal = allHeals.length;
@@ -454,6 +558,21 @@ function writeMarkdown(r, file) {
     if (a.open && (a.open.expectation || a.open.plan || a.open.thread)) md += `- ⚠ 未收尾落差：期望落差(G) ${a.open.expectation || 0} / 计划偏离(P) ${a.open.plan || 0} / 长任务(I) ${a.open.thread || 0}（报告生成前请显式对齐用户预期要点、比对声明步骤与实际轨迹、收尾长任务）\n`;
     if (a.gaps && (a.gaps.G || a.gaps.P || a.gaps.I)) md += `- 📊 本轮已记录落差信号：G ${a.gaps.G || 0} / P ${a.gaps.P || 0} / I ${a.gaps.I || 0}\n`;
     if (a.solutions && a.solutions.length) { md += `- 💡 外部解法命中 ${a.solutions.length} 条（已落地知识面）：\n`; for (const s of a.solutions.slice(0, 5)) md += `  - ${s.title}：${s.content}\n`; }
+  }
+  // ── 不偷懒监督器门禁（v1.5.0）─────────────────────────────
+  // 由 plugins/anti-lazy-supervisor 提供「追问-对账-门禁」闭环：
+  //   拿契约对照真实执行日志，口头声明不算数；有漏检则在报告顶部加警告并拒落盘。
+  // 设计约束（与既有 tap* 一致）：
+  //   · 插件缺失 → 完全降级，宿主行为与改动前**逐字节相同**
+  //   · 插件自身抛错 → 只记 toolIssues，绝不中断验证
+  //   · 未启用（默认）→ 不注入、不拦截
+  const sup = r && r.supervisor;
+  if (sup && sup.enabled && sup.block) {
+    if (sup.banner) md = String(sup.banner) + '\n\n' + md;
+    md += '\n' + String(sup.block) + '\n';
+  }
+  if (sup && sup.enabled && sup.blocked && r.toolIssues && Array.isArray(r.toolIssues)) {
+    r.toolIssues.push({ kind: 'supervisor-gate', msg: String(sup.banner || '监督审计未通过：存在漏检项，报告已标记') });
   }
   fs.writeFileSync(file, md);
 }
