@@ -315,6 +315,61 @@ check('声明了契约但没执行 → REJECT（监督的价值所在）', () =>
   assert.strictEqual(C.gate(s, r).allow, false);
 });
 
+// ═══ 补充：执行证据数据源 ════════════════════════════════════
+// 回归钉死 2026-10-21 踩过的坑：只读 ledger → 在真实项目上把 34 个
+// **确实测过**的功能点全判 dangling（假阳性 100%）。真证据在 result.json。
+console.log('\n[补充] 执行证据源：result.json 为主，ledger 为辅');
+
+check('readExecutionLog 能从 result.json 读出功能点', () => {
+  const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'als-res-'));
+  fs.mkdirSync(path.join(tmpd, 'verify_report'), { recursive: true });
+  fs.writeFileSync(path.join(tmpd, 'verify_report', 'result.json'), JSON.stringify({
+    features: [
+      { id: 'F01', name: '登录正常流程', pass: true, errors: [] },
+      { id: 'F02', name: '导出功能', pass: true, errors: [] },
+    ],
+  }), 'utf-8');
+  fs.mkdirSync(path.join(tmpd, 'ledger'), { recursive: true });
+  // ledger 里只有落差，没有功能点执行记录
+  fs.writeFileSync(path.join(tmpd, 'ledger', 'ledger.jsonl'),
+    JSON.stringify({ ledger: 'error', title: 'x', detail: 'y' }) + '\n', 'utf-8');
+  const log = C.readExecutionLog(tmpd);
+  assert.ok(log.results.length === 2, '应读出 2 条功能点证据，实际 ' + log.results.length);
+  assert.ok(log.ledger.length === 1, 'ledger 应仍可读');
+  fs.rmSync(tmpd, { recursive: true, force: true });
+});
+
+check('result.json 里的功能点能把契约判为 completed（关键：假阳性防线）', () => {
+  const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'als-res2-'));
+  fs.mkdirSync(path.join(tmpd, 'verify_report'), { recursive: true });
+  fs.writeFileSync(path.join(tmpd, 'verify_report', 'result.json'), JSON.stringify({
+    features: [{ id: 'F01', name: '登录正常流程', pass: true, errors: [] }],
+  }), 'utf-8');
+  fs.mkdirSync(path.join(tmpd, 'ledger'), { recursive: true });
+  fs.writeFileSync(path.join(tmpd, 'ledger', 'ledger.jsonl'),
+    JSON.stringify({ ledger: 'expectation', title: '某落差', detail: '' }) + '\n', 'utf-8');
+
+  const s = C.createQuestioning({ initial: ['登录正常流程'] });
+  const r = C.reconcile(s, C.readExecutionLog(tmpd), {});
+  assert.ok(r.completed === 1, 'result.json 里的功能点应判 completed，实际 completed=' + r.completed);
+  assert.ok(r.dangling === 0, '不应误判漏检');
+  fs.rmSync(tmpd, { recursive: true, force: true });
+});
+
+check('只有 ledger 无 result.json 时，不得把功能点误判为漏检', () => {
+  // 回归：初版正是这里全线误报。这里明确行为——认不出证据就如实标记，
+  // 不允许「静默判漏检」而让真实缺口混在里面。
+  const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'als-res3-'));
+  fs.mkdirSync(path.join(tmpd, 'ledger'), { recursive: true });
+  fs.writeFileSync(path.join(tmpd, 'ledger', 'ledger.jsonl'),
+    JSON.stringify({ ledger: 'error', title: 'x', detail: 'y' }) + '\n', 'utf-8');
+  const log = C.readExecutionLog(tmpd);
+  assert.ok(log.results.length === 0, '无 result.json 时 results 应为空，实际 ' + log.results.length);
+  assert.ok(log.evidenceKind === 'gaps_only',
+    '只有 ledger 时应标记为 gaps_only（不能当作跑过），实际: ' + log.evidenceKind);
+  fs.rmSync(tmpd, { recursive: true, force: true });
+});
+
 // ── 输出 ────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(70));
 for (const [st, name] of results) {
