@@ -370,21 +370,29 @@ function reconcile(session, execLog, opts) {
     else if (counts.skipped > 0) verdict = 'PASS_WITH_WARNINGS';
 
     const totalCount = (session && session.items ? session.items.length : 0);
-    // ⚠ 空契约集不得判 PASS —— 那是「没契约 = 一切都做到了」的荒谬结论。
-    //   契约为空时一律保守 REJECT（2026-10-21 实测踩过两次：
-    //   ① null session 走进正常路径返回了 PASS，门禁因此放行；
-    //   ② 修复时先写了 `if (total === 0)`，而 total 尚未定义（TDZ），
-    //      导致**正常会话也被当成空契约**全判 REJECT —— 修A 引入修B）。
-    if (totalCount === 0) {
-      verdict = 'REJECT';
+
+    // ── 空契约：区分两种截然不同的情形（2026-10-21 修正）────────────
+    //   A. **调用方压根没起会话**（session 为 null / 未跑追问）
+    //      → 判 REJECT。无契约就放行 = 监督形同虚设，这是防造假的底线。
+    //      实测踩过：null session 走正常路径返回 PASS，门禁因此放行。
+    //   B. **起了会话但一个契约都没有**（用户还没声明测试点）
+    //      → 判 NOT_APPLICABLE，**不拦**。这是「尚未进入监督流程」，
+    //        不是「有契约却没做」。若也 REJECT，默认开启后会把所有
+    //        刚加载插件、还没跑追问的流程全部拦死 —— 比默认关闭更糟。
+    if (!session || totalCount === 0) {
+      const noSession = !session;
       details.push({
         id: '-', source: '-', category: '-',
-        description: '(契约集为空，无法对账)',
-        status: 'dangling', skipReason: null,
+        description: noSession ? '(未启动监督会话)' : '(尚未声明测试点契约)',
+        status: noSession ? 'dangling' : 'not_applicable',
+        skipReason: null,
         claimedByVerifier: false, hasExecLog: false,
-        note: '空契约不得判 PASS —— 保守拒绝',
+        note: noSession
+          ? '无监督会话 → 保守拒绝（无契约不得放行）'
+          : '尚未声明契约 → 不适用，本轮不做门禁',
       });
-      counts.dangling = (counts.dangling || 0) + 1;
+      if (noSession) counts.dangling = (counts.dangling || 0) + 1;
+      verdict = noSession ? 'REJECT' : 'NOT_APPLICABLE';
     }
 
     return {
