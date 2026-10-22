@@ -192,8 +192,7 @@ function buildFinding(input) {
     reproPath: Array.isArray(input.reproPath) ? input.reproPath : [],
     evidence: input.evidence || {},
     falsePositiveNote: cls.falsePositiveNote || '',
-    candidateSpecReserved: null,  // spec §3：本版只留结构
-    reviewReserved: null,         // spec §3：本版只留结构
+    candidateSpecReserved: null,  // spec §3：本版只留结构（T5 Layer 2 用，T4 不处理）
   };
 
   // 对 requestfailed / pageerror，附上 error-classify 归因（复用既有引擎）
