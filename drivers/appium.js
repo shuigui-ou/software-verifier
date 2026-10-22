@@ -1,20 +1,11 @@
 'use strict';
 const { assertSafeExpr } = require('./safe-expr.cjs');
-const { healClickSel, healFillSel, healWaitSel } = require('./heal.cjs');
-/**
- * ⚠️ HEAL INTEGRATION：INERT for this driver（接口预留，功能未生效）.
- *   heal.cjs 的 heal*Sel 依赖 playwright 的 page.evaluate / page.waitForFunction，须在浏览器 DOM 上下文运行；
- *   本驱动（Appium + webdriverio）只暴露 executeScript/waitUntil，无 playwright page 原语。setHeal(v) 只接布尔开关：
- *   HEAL_ENABLED 生效，但 healPage 恒为 null（除非传入带 evaluate+waitForFunction 的对象）。
- *   当前 `if (HEAL_ENABLED && healPage)` 分支对 Appium 驱动是死代码，直到驱动暴露 playwright 兼容句柄，
- *   或 heal.cjs 为 webdriverio 原语重写。feature flag 默认关闭（不传 page 即不激活）。
- *   切勿把此分支误读为「自愈已可用」——T3 定性为「接口预留，功能 inert」。
- */
+const { healClickSel, healFillSel, healWaitSel, createHealAdapter } = require('./heal.cjs');
 /**
  * 原生移动 App 驱动（基于 Appium + webdriverio）
  *
  * ⚠️ UNTESTED IN SANDBOX：本环境未安装 Appium server / 模拟器 / 真机，
- *    以下为按 webdriverio API 编写的最佳实现，需在本机装好工具链后实跑校准。
+ *    以下为按 webdriverio API 编写的最佳实现，真机自愈行为需在本机装好工具链后实跑校准。
  *
  * 前置条件：
  *   - 启动 Appium server（默认 http://localhost:4723）
@@ -26,10 +17,18 @@ const { healClickSel, healFillSel, healWaitSel } = require('./heal.cjs');
  *   - clickSel:  建议用 accessibility id（'~id'）或 xpath（'//*[@resource-id=...]'）
  *   - fillSel:   element.setValue(...)
  *   - assert.eval: 通过 driver.executeScript 在 WebView 上下文执行；原生上下文请用 sel/text 断言
+ *
+ * T3b：已接入 HealAdapter（webdriverio 适配器），原选择器失效时走 handle 模型自愈（真实设备 e2e 见 T3b spec §0.2，沙箱 N/A）。
+ * 启用路径（OR 无优先级）：(a) 显式 setHeal(adapter) / (b) launch opts.healEnabled=true /
+ *   (c) 环境变量 SV_HEAL=1。任一 + 合法 adapter 即激活；否则默认关闭。
  */
 function createAppiumDriver(PW_CORE) {
   let driver;
   const errors = [], featureErrors = [];
+  let heals = [];
+  let HEAL_ENABLED = false;
+  let healAdapter = null;
+  let HEAL_EXPLICIT = false;
 
   function textXpath(platform, text) {
     if (platform === 'ios') return `//*[contains(@label,"${text}") or contains(@name,"${text}") or contains(@value,"${text}")]`;
@@ -42,6 +41,16 @@ function createAppiumDriver(PW_CORE) {
   }
 
   async function launch(opts) {
+    // 测试 seam：注入 mock driver 以绕过外部依赖（生产不传 injectDriver）。
+    if (opts && opts.injectDriver) {
+      driver = opts.injectDriver;
+      const wantHeal = HEAL_EXPLICIT || (opts && opts.healEnabled === true) || (process.env.SV_HEAL === '1');
+      if (wantHeal && !healAdapter) {
+        try { healAdapter = createHealAdapter('webdriverio', driver); HEAL_ENABLED = true; }
+        catch (e) { HEAL_ENABLED = false; healAdapter = null; }
+      }
+      return { page: driver };
+    }
     let remote;
     try { ({ remote } = require('webdriverio')); }
     catch (e) { throw new Error('Appium 驱动需要 webdriverio：npm i -D webdriverio'); }
@@ -50,6 +59,12 @@ function createAppiumDriver(PW_CORE) {
     if (opts.caps) { try { caps = Object.assign(caps, JSON.parse(require('fs').readFileSync(opts.caps, 'utf8'))); } catch (e) {} }
     if (opts.appPath && caps.app !== undefined) caps.app = opts.appPath;
     driver = await remote({ hostname: opts.appiumUrl || 'localhost', port: opts.appiumPort || 4723, capabilities: caps, logLevel: 'error' });
+    // T3b 启用路径 (b)/(c)：launch 时按 opts.healEnabled / 环境变量 自动建 webdriverio adapter。
+    const wantHeal = HEAL_EXPLICIT || (opts && opts.healEnabled === true) || (process.env.SV_HEAL === '1');
+    if (wantHeal && !healAdapter) {
+      try { healAdapter = createHealAdapter('webdriverio', driver); HEAL_ENABLED = true; }
+      catch (e) { HEAL_ENABLED = false; healAdapter = null; }
+    }
     return { page: driver };
   }
 
@@ -62,41 +77,39 @@ function createAppiumDriver(PW_CORE) {
     } catch (e) { return { ok: false, err: e.message }; }
   }
   async function clickSel(sel, nth = 0) {
-    try {
-      const els = await driver.$$(sel);
-      if (!els[nth]) {
-        // 条件接线：仅当 healPage 有效（playwright 上下文）时委托 heal.cjs 等价定位；否则如实失败。
-        if (HEAL_ENABLED && healPage) {
-          const h = await healClickSel(healPage, sel, nth);
-          if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
-          heals.push({ sel, ok: false, action: 'click' });
-        }
-        return { ok: false, count: els.length };
-      }
-      await els[nth].click();
-      return { ok: true, count: els.length };
+    let els = [];
+    try { els = await driver.$$(sel); } catch (e) { els = []; }
+    if (els[nth]) { await els[nth].click(); return { ok: true, count: els.length }; }
+    // T3b：原选择器失效 → 走 handle 模型自愈（死分支已激活）。
+    if (HEAL_ENABLED && healAdapter) {
+      const h = await healClickSel(healAdapter, sel, nth);
+      if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+      heals.push({ sel, ok: false, action: 'click' });
+      return { ok: false, count: els.length, ...(h.err ? { healError: h.err } : {}) };
     }
-    catch (e) { return { ok: false, err: e.message }; }
+    return { ok: false, count: els.length };
   }
   async function fillSel(sel, value) {
-    try {
-      const el = await driver.$(sel);
-      if (!el) {
-        if (HEAL_ENABLED && healPage) {
-          const h = await healFillSel(healPage, sel, value);
-          if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
-          heals.push({ sel, ok: false, action: 'fill' });
-        }
-        return { ok: false, err: 'fillSel 未找到: ' + sel };
-      }
-      await el.setValue(value);
-      return { ok: true };
-    }
-    catch (e) {
-      if (HEAL_ENABLED && healPage) {
-        const h = await healFillSel(healPage, sel, value);
+    let el = null;
+    try { el = await driver.$(sel); } catch (e) { el = null; }
+    if (!el) {
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healFillSel(healAdapter, sel, value);
         if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
         heals.push({ sel, ok: false, action: 'fill' });
+        return { ok: false, err: 'fillSel 未找到: ' + sel, ...(h.err ? { healError: h.err } : {}) };
+      }
+      return { ok: false, err: 'fillSel 未找到: ' + sel };
+    }
+    try { await el.setValue(value); return { ok: true }; }
+    catch (e) {
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healFillSel(healAdapter, sel, value);
+        if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
+        // 自愈也失败：保留原始错误为主错误，heal 错误作为附加信息挂载。
+        const oe = new Error(e.message); if (h.err) oe.healError = h.err;
+        heals.push({ sel, ok: false, action: 'fill' });
+        return { ok: false, err: e.message, ...(h.err ? { healError: h.err } : {}) };
       }
       return { ok: false, err: e.message };
     }
@@ -125,8 +138,8 @@ function createAppiumDriver(PW_CORE) {
   async function waitSel(sel, timeout) {
     try { await driver.waitUntil(async () => (await driver.$$(sel)).length > 0, { timeout: timeout || 10000 }); return { ok: true }; }
     catch (e) {
-      if (HEAL_ENABLED && healPage) {
-        const h = await healWaitSel(healPage, sel, timeout || 10000);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healWaitSel(healAdapter, sel, timeout || 10000);
         if (h.ok) { heals.push({ sel, strategy: 'wait-heal', ok: true, action: 'wait' }); return { ok: true, healed: true }; }
         heals.push({ sel, ok: false, action: 'wait' });
       }
@@ -155,18 +168,14 @@ function createAppiumDriver(PW_CORE) {
   async function close() { if (driver) await driver.deleteSession(); }
   function clearFeatureErrors() { featureErrors.length = 0; }
 
-  // 自愈（heal）接口：与 dom.js 对齐，使主流程 drv.setHeal / drv.heals / drv.clearHeals 不再抛 TypeError。
-  // 条件接线：仅当 setHeal 收到 playwright page（WebView 上下文）时才委托 heal.cjs 做等价定位；
-  // 原生 App 用 webdriverio，本身没有 playwright page，故默认 healPage 为空、heals 恒为空（不强行塞入不兼容调用）。
-  let heals = [];
-  let HEAL_ENABLED = false;
-  let healPage = null;
+  // T3b 自愈接口：setHeal 接受 HealAdapter 实例（路径 a），或 true（表示按驱动自身 ctx 在 launch 时激活）。
   function clearHeals() { heals.length = 0; }
   function setHeal(v) {
-    HEAL_ENABLED = !!v;
-    // 仅当传入对象具备 playwright page 原语（evaluate + waitForFunction）时才接管自愈，
-    // 否则保持空（原生 App 无 playwright 上下文，强行调用会在运行时报 TypeError）。
-    healPage = (v && typeof v.evaluate === 'function' && typeof v.waitForFunction === 'function') ? v : null;
+    if (v && typeof v.queryCandidates === 'function' && typeof v.readSignals === 'function' && typeof v.clickEl === 'function') {
+      healAdapter = v; HEAL_ENABLED = true; HEAL_EXPLICIT = false; return;
+    }
+    if (v === true) { HEAL_EXPLICIT = true; HEAL_ENABLED = false; healAdapter = null; return; }
+    HEAL_ENABLED = false; healAdapter = null; HEAL_EXPLICIT = false;
   }
 
   // 文件上传（fileSel）：原生 App 无 web <input type=file> 模型，显式标记不支持（返回结构化错误而非抛 TypeError）。
