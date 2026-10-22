@@ -10,7 +10,7 @@
  * 自愈：clickSel/fillSel/waitSel 失败时自动用 drivers/heal.cjs 找回等价元素。
  */
 const path = require('path');
-const { healClickSel, healFillSel, healWaitSel } = require(path.join(__dirname, '..', 'drivers', 'heal.cjs'));
+const { healClickSel, healFillSel, healWaitSel, createHealAdapter } = require(path.join(__dirname, '..', 'drivers', 'heal.cjs'));
 const visual = require(path.join(__dirname, '..', 'drivers', 'visual.cjs'));
 const { assertSafeExpr } = require(path.join(__dirname, 'safe-expr.cjs'));
 
@@ -58,6 +58,7 @@ function makeDomDriver(kind, PW_CORE) {
   const evPush = (ev) => { rawErrors.push(ev); rawFeatureErrors.push(ev); };
   const heals = [];
   let HEAL_ENABLED = true;
+  let healAdapter = null;
 
   async function launch(opts) {
     if (kind === 'browser') {
@@ -102,8 +103,9 @@ function makeDomDriver(kind, PW_CORE) {
       if (st < 400) return;
       evPush({ text: 'http-status: ' + st + ' | url=' + r.url(), kind: 'response', url: r.url(), status: st });
     });
-    // 自动接受 dialog：confirm→继续；alert→关闭；prompt→返回占位值（让"任务模板/新项目"等需要输入名称的流程能继续）
+    // 自动接受 dialog：confirm→继续；alert→关闭；prompt→返回占位值（让"任务模板/新项目"等需要输入名称流程能继续）
     page.on('dialog', async d => { try { if (d.type() === 'prompt') await d.accept('自动验证'); else await d.accept(); } catch (e) {} });
+    healAdapter = createHealAdapter('playwright', page);
     return { page };
   }
 
@@ -189,7 +191,8 @@ function makeDomDriver(kind, PW_CORE) {
   }
 
   async function clickSel(sel, nth = 0) {
-    const els = await page.$$(sel);
+    let els = [];
+    try { els = await page.$$(sel); } catch (e) { els = []; }
     if (els[nth]) {
       const rc = await robustClick(els[nth]);
       if (rc.ok) {
@@ -197,17 +200,24 @@ function makeDomDriver(kind, PW_CORE) {
         return { ok: true, count: els.length, ...(rc.strategy ? { healed: true, strategy: rc.strategy } : {}) };
       }
       // 被遮挡/不可点：先自愈找回等价元素再试（遮挡与定位失效常同时出现）
-      if (HEAL_ENABLED) {
-        const h = await healClickSel(page, sel, nth);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healClickSel(healAdapter, sel, nth);
         if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+        // 自愈也失败：保留原始错误为主错误，heal 错误作为附加信息挂载
+        const oe = rc.err ? new Error(rc.err) : null;
+        if (oe && h.err) oe.healError = h.err;
+        heals.push({ sel, ok: false, action: 'click' });
+        return { ok: false, count: els.length, err: rc.err, ...(h.err ? { healError: h.err } : {}) };
       }
       heals.push({ sel, ok: false, action: 'click' });
       return { ok: false, count: els.length, err: rc.err };
     }
     // 自愈：原选择器失效时，用稳定信号找回等价元素
-    if (HEAL_ENABLED) {
-      const h = await healClickSel(page, sel, nth);
+    if (HEAL_ENABLED && healAdapter) {
+      const h = await healClickSel(healAdapter, sel, nth);
       if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+      heals.push({ sel, ok: false, action: 'click' });
+      return { ok: false, count: els.length, ...(h.err ? { healError: h.err } : {}) };
     }
     heals.push({ sel, ok: false, action: 'click' });
     return { ok: false, count: els.length };
@@ -236,9 +246,13 @@ function makeDomDriver(kind, PW_CORE) {
   async function fillSel(sel, value) {
     try { await page.fill(sel, value, { timeout: 5000 }); return { ok: true }; }
     catch (e) {
-      if (HEAL_ENABLED) {
-        const h = await healFillSel(page, sel, value);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healFillSel(healAdapter, sel, value);
         if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
+        // 自愈也失败：保留原始错误为主错误，heal 错误作为附加信息挂载
+        const oe = new Error(e.message); if (h.err) oe.healError = h.err;
+        heals.push({ sel, ok: false, action: 'fill' });
+        return { ok: false, err: e.message, ...(h.err ? { healError: h.err } : {}) };
       }
       heals.push({ sel, ok: false, action: 'fill' });
       return { ok: false, err: e.message };
@@ -283,8 +297,8 @@ function makeDomDriver(kind, PW_CORE) {
         heals.push({ sel, strategy: 'overlay-wait', ok: true, action: 'wait' });
         return { ok: true, healed: true, strategy: 'overlay-wait' };
       } catch (_e2) { /* 继续走定位自愈 */ }
-      if (HEAL_ENABLED) {
-        const h = await healWaitSel(page, sel, timeout || 10000);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healWaitSel(healAdapter, sel, timeout || 10000);
         if (h.ok) { heals.push({ sel, strategy: 'wait-heal', ok: true, action: 'wait' }); return { ok: true, healed: true }; }
       }
       heals.push({ sel, ok: false, action: 'wait' });
@@ -360,7 +374,10 @@ function makeDomDriver(kind, PW_CORE) {
   async function close() { if (browser) await browser.close(); }
   function clearFeatureErrors() { rawFeatureErrors.length = 0; }
   function clearHeals() { heals.length = 0; }
-  function setHeal(v) { HEAL_ENABLED = !!v; }
+  function setHeal(v) {
+    if (v && typeof v.queryCandidates === 'function' && typeof v.readSignals === 'function' && typeof v.clickEl === 'function') { healAdapter = v; HEAL_ENABLED = true; return; }
+    HEAL_ENABLED = !!v;
+  }
 
   return {
     type: kind,
