@@ -1,20 +1,11 @@
 'use strict';
 const { assertSafeExpr } = require('./safe-expr.cjs');
-const { healClickSel, healFillSel, healWaitSel } = require('./heal.cjs');
-/**
- * ⚠️ HEAL INTEGRATION：INERT for this driver（接口预留，功能未生效）.
- *   heal.cjs 的 heal*Sel 依赖 playwright 的 page.evaluate / page.waitForFunction，须在浏览器 DOM 上下文运行；
- *   本驱动（miniprogram-automator）只暴露 $$/tap，无 playwright page 原语。setHeal(v) 只接布尔开关：
- *   HEAL_ENABLED 生效，但 healPage 恒为 null（除非传入带 evaluate+waitForFunction 的对象）。
- *   当前 `if (HEAL_ENABLED && healPage)` 分支对小程序驱动是死代码，直到驱动暴露 playwright 兼容句柄，
- *   或 heal.cjs 为 miniprogram-automator 原语重写。feature flag 默认关闭（不传 page 即不激活）。
- *   切勿把此分支误读为「自愈已可用」——T3 定性为「接口预留，功能 inert」。
- */
+const { healClickSel, healFillSel, healWaitSel, createHealAdapter } = require('./heal.cjs');
 /**
  * 微信小程序驱动（基于 miniprogram-automator，驱动微信开发者工具模拟器）
  *
  * ⚠️ UNTESTED IN SANDBOX：本环境未安装微信开发者工具与 miniprogram-automator，
- *    以下为按官方 API 编写的最佳实现，需在本机装好工具链后实跑校准。
+ *    以下为按官方 API 编写的最佳实现，真机自愈行为需在本机装好工具链后实跑校准。
  *
  * 前置条件：
  *   - 安装微信开发者工具（并开启「设置 → 安全 → 服务端口」）
@@ -26,17 +17,41 @@ const { healClickSel, healFillSel, healWaitSel } = require('./heal.cjs');
  *   - clickSel: 支持 .class #id tag 组合；不支持 document 查询
  *   - fillSel:   input 组件用 element.trigger('input',{value})
  *   - assert.eval: 在 miniProgram 全局上下文执行，勿用 document.*（用页面 data / 组件方法）
+ *
+ * T3b：已接入 HealAdapter，原选择器失效时走 handle 模型自愈（真实设备 e2e 见 T3b spec §0.2，沙箱 N/A）。
+ * 启用路径（OR 无优先级）：(a) 显式 setHeal(adapter) / (b) launch opts.healEnabled=true /
+ *   (c) 环境变量 SV_HEAL=1。任一 + 合法 adapter 即激活；否则默认关闭。
  */
 function createMiniprogramDriver(PW_CORE) {
   let miniProgram, page, automator;
   const errors = [], featureErrors = [];
+  let heals = [];
+  let HEAL_ENABLED = false;
+  let healAdapter = null;
+  let HEAL_EXPLICIT = false;
 
   async function launch(opts) {
+    // 测试 seam：注入 mock page 以绕过外部依赖（生产不传 injectPage）。
+    if (opts && opts.injectPage) {
+      page = opts.injectPage;
+      const wantHeal = HEAL_EXPLICIT || (opts && opts.healEnabled === true) || (process.env.SV_HEAL === '1');
+      if (wantHeal && !healAdapter) {
+        try { healAdapter = createHealAdapter('miniprogram', { miniProgram: null, page }); HEAL_ENABLED = true; }
+        catch (e) { HEAL_ENABLED = false; healAdapter = null; }
+      }
+      return { page };
+    }
     try { automator = require('miniprogram-automator'); }
     catch (e) { throw new Error('小程序驱动需要 miniprogram-automator：npm i -D miniprogram-automator'); }
     if (!opts.appPath) throw new Error('小程序驱动需要 --app <小程序工程 projectPath>');
     miniProgram = await automator.launch({ projectPath: opts.appPath, port: opts.port || 9420 });
     page = await miniProgram.currentPage();
+    // T3b 启用路径 (b)/(c)：launch 时按 opts.healEnabled / 环境变量 自动建 miniprogram adapter。
+    const wantHeal = HEAL_EXPLICIT || (opts && opts.healEnabled === true) || (process.env.SV_HEAL === '1');
+    if (wantHeal && !healAdapter) {
+      try { healAdapter = createHealAdapter('miniprogram', { miniProgram, page }); HEAL_ENABLED = true; }
+      catch (e) { HEAL_ENABLED = false; healAdapter = null; }
+    }
     return { page };
   }
 
@@ -59,36 +74,40 @@ function createMiniprogramDriver(PW_CORE) {
   }
 
   async function clickSel(sel, nth = 0) {
-    const els = await page.$$(sel);
-    if (!els[nth]) {
-      // 条件接线：仅当 healPage 有效（playwright 上下文）时委托 heal.cjs 等价定位；否则如实失败。
-      if (HEAL_ENABLED && healPage) {
-        const h = await healClickSel(healPage, sel, nth);
-        if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
-        heals.push({ sel, ok: false, action: 'click' });
-      }
-      return { ok: false, count: els.length };
+    let els = [];
+    try { els = await page.$$(sel); } catch (e) { els = []; }
+    if (els[nth]) { await els[nth].tap(); return { ok: true, count: els.length }; }
+    // T3b：原选择器失效 → 走 handle 模型自愈（死分支已激活）。
+    if (HEAL_ENABLED && healAdapter) {
+      const h = await healClickSel(healAdapter, sel, nth);
+      if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'click', text: h.text }); return { ok: true, healed: true, strategy: h.strategy, info: h.text }; }
+      heals.push({ sel, ok: false, action: 'click' });
+      return { ok: false, count: els.length, ...(h.err ? { healError: h.err } : {}) };
     }
-    await els[nth].tap();
-    return { ok: true, count: els.length };
+    return { ok: false, count: els.length };
   }
 
   async function fillSel(sel, value) {
-    const els = await page.$$(sel);
+    let els = [];
+    try { els = await page.$$(sel); } catch (e) { els = []; }
     if (!els[0]) {
-      if (HEAL_ENABLED && healPage) {
-        const h = await healFillSel(healPage, sel, value);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healFillSel(healAdapter, sel, value);
         if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
         heals.push({ sel, ok: false, action: 'fill' });
+        return { ok: false, err: 'fillSel 未找到: ' + sel, ...(h.err ? { healError: h.err } : {}) };
       }
       return { ok: false, err: 'fillSel 未找到: ' + sel };
     }
     try { await els[0].trigger('input', { value }); return { ok: true }; }
     catch (e) {
-      if (HEAL_ENABLED && healPage) {
-        const h = await healFillSel(healPage, sel, value);
+      if (HEAL_ENABLED && healAdapter) {
+        const h = await healFillSel(healAdapter, sel, value);
         if (h.ok) { heals.push({ sel, strategy: h.strategy, ok: true, action: 'fill' }); return { ok: true, healed: true }; }
+        // 自愈也失败：保留原始错误为主错误，heal 错误作为附加信息挂载。
+        const oe = new Error(e.message); if (h.err) oe.healError = h.err;
         heals.push({ sel, ok: false, action: 'fill' });
+        return { ok: false, err: e.message, ...(h.err ? { healError: h.err } : {}) };
       }
       return { ok: false, err: e.message };
     }
@@ -138,8 +157,8 @@ function createMiniprogramDriver(PW_CORE) {
       if ((await countSel(sel)) > 0) return { ok: true };
       await new Promise(r => setTimeout(r, 500));
     }
-    if (HEAL_ENABLED && healPage) {
-      const h = await healWaitSel(healPage, sel, timeout || 10000);
+    if (HEAL_ENABLED && healAdapter) {
+      const h = await healWaitSel(healAdapter, sel, timeout || 10000);
       if (h.ok) { heals.push({ sel, strategy: 'wait-heal', ok: true, action: 'wait' }); return { ok: true, healed: true }; }
       heals.push({ sel, ok: false, action: 'wait' });
     }
@@ -177,18 +196,16 @@ function createMiniprogramDriver(PW_CORE) {
   async function close() { if (miniProgram) await miniProgram.close(); }
   function clearFeatureErrors() { featureErrors.length = 0; }
 
-  // 自愈（heal）接口：与 dom.js 对齐，使主流程 drv.setHeal / drv.heals / drv.clearHeals 不再抛 TypeError。
-  // 条件接线：仅当 setHeal 收到 playwright page（DOM/WebView 上下文）时才委托 heal.cjs 做等价定位；
-  // 小程序驱动用 miniprogram-automator，本身没有 playwright page，故默认 healPage 为空、heals 恒为空（不强行塞入不兼容调用）。
-  let heals = [];
-  let HEAL_ENABLED = false;
-  let healPage = null;
+  // T3b 自愈接口：setHeal 接受 HealAdapter 实例（路径 a），或 true（表示按驱动自身 ctx 在 launch 时激活）。
+  // 条件接线：仅当 healAdapter 合法（具备 queryCandidates/readSignals/clickEl）才委托 handle 模型自愈，
+  // 否则保持默认关闭，不强行塞入不兼容调用。
   function clearHeals() { heals.length = 0; }
   function setHeal(v) {
-    HEAL_ENABLED = !!v;
-    // 仅当传入对象具备 playwright page 原语（evaluate + waitForFunction）时才接管自愈，
-    // 否则保持空（小程序无 playwright 上下文，强行调用会在运行时报 TypeError）。
-    healPage = (v && typeof v.evaluate === 'function' && typeof v.waitForFunction === 'function') ? v : null;
+    if (v && typeof v.queryCandidates === 'function' && typeof v.readSignals === 'function' && typeof v.clickEl === 'function') {
+      healAdapter = v; HEAL_ENABLED = true; HEAL_EXPLICIT = false; return;
+    }
+    if (v === true) { HEAL_EXPLICIT = true; HEAL_ENABLED = false; healAdapter = null; return; }
+    HEAL_ENABLED = false; healAdapter = null; HEAL_EXPLICIT = false;
   }
 
   // 文件上传（fileSel）：小程序无 web <input type=file> 模型，显式标记不支持（返回结构化错误而非抛 TypeError）。
