@@ -78,7 +78,7 @@ function resolveNode() {
 const log = (...a) => process.stderr.write('[mcp] ' + a.join(' ') + '\n');
 
 const { makeDomDriver } = require(path.join(SKILL_DIR, 'drivers', 'dom.js'));
-const { healClickSel, healFillSel } = require(path.join(SKILL_DIR, 'drivers', 'heal.cjs'));
+const { healClickSel, healFillSel, createHealAdapter } = require(path.join(SKILL_DIR, 'drivers', 'heal.cjs'));
 const { runStep, runAssert } = require(path.join(SKILL_DIR, 'engine.cjs'));
 const visual = require(path.join(SKILL_DIR, 'drivers', 'visual.cjs'));
 const { connect } = require(path.join(SKILL_DIR, 'mcp-client.cjs'));
@@ -255,9 +255,10 @@ async function handleTool(params, id) {
     }
     if (name === 'heal_selector') {
       const r = await withBrowser(args.url, async (drv, page) => {
+        const adapter = createHealAdapter('playwright', page);
         const h = args.action === 'fill'
-          ? await healFillSel(page, args.sel, args.value || '')
-          : await healClickSel(page, args.sel, 0);
+          ? await healFillSel(adapter, args.sel, args.value || '')
+          : await healClickSel(adapter, args.sel, 0);
         return h;
       });
       return ok(id, r);
