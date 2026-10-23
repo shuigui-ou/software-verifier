@@ -26,6 +26,99 @@ const os = require('os');
 
 const SKILL_DIR = __dirname;
 
+// ---------- P1 测试可用性：导出纯函数供单测（require 时不跑 CLI 主流程） ----------
+// 被 require 时（require.main !== module），仅导出下面的纯函数并提前返回，
+// 避免无 --spec 时 JSON.parse(readFileSync(null)) 抛错 / process.exit，且跳过 driver/evo 等重依赖。
+function collectClaimsAndSkipNotes(spec, selected, opt) {
+  const claimed = {};
+  const skipNotes = {};
+  const selIds = new Set(selected.map(f => f.id));
+  for (const f of selected) claimed[f.name || f.description] = 'completed';
+  for (const f of (spec.features || [])) {
+    if (selIds.has(f.id)) continue;
+    let reason;
+    if (opt.only.length && !opt.only.includes(f.id)) reason = '不在 --only 列表';
+    else if (opt.exclude.length && opt.exclude.includes(f.id)) reason = '被 --exclude 排除';
+    else if (opt.uiOnly && f.type === 'ai') reason = 'ai 类型被 --ui-only 排除';
+    else reason = '不在 --only 列表';
+    skipNotes[f.name || f.description] = reason;
+  }
+  return { claimed, skipNotes };
+}
+function warnSameNameFeatures(spec, logFn) {
+  const seen = new Set();
+  for (const f of (spec.features || [])) {
+    const nm = f.name || f.description;
+    if (seen.has(nm)) logFn('⚠ 同名 feature 检测到: ' + nm + ' —— skipNotes/claimed 键会碰撞，readExecutionLog 执行日志也会互相覆盖（建议强制 name 唯一或改键格式，见 P1 spec）');
+    seen.add(nm);
+  }
+}
+// P1：防偷懒监督器模块加载失败原因（fail-open 的「可观测化」载体）。
+// ⚠ 2026-10-23 上移到此处（评审16 行为断言抓出 TDZ 崩溃）：
+//   原本声明在下方 require 之后，而 writePartialResult 定义在本行之前。
+//   单测直接 require 本文件并调用该纯函数时，变量处于 TDZ（let 未初始化）
+//   → 'Cannot access before initialization' → 该函数**整体抛错**，
+//   连带 partialWriteError 等所有留痕分支全部失效（实测 23 条断言连带失败）。
+//   即：为了修「守卫没写在 FATAL 路径」而把守卫写进来，却因声明顺序把整个函数打瘫——
+//   守卫写在错误的位置，等于没有守卫。故声明必须早于所有使用点。
+let SUPERVISOR_LOAD_ERR = null;
+function writePartialResult(OUT, result, sup, Sup, opt, err) {
+  try {
+    // ⚠ 2026-10-23 修复（靶子站端到端 Run4 实测暴露的第三个接线缺口）：
+    //   原实现整段包在 `if (Sup && sup && sup.__enabled)` 里 —— 而监督器会话是在**初始导航之后**
+    //   才 start 的（Sup.start 在 verify.cjs:409，初始导航在 :366）。
+    //   于是「初始导航就 FATAL」这一最需要留证据的场景（入口 URL 不可达/DNS 失败），
+    //   会话根本还不存在 → 守卫为假 → **整轮结果一个字都不落盘**，用例3 的验收目标直接落空。
+    //   实测：--url http://localhost:1 时 out 目录里连 result.json 都没有（ENOENT）。
+    //   修法：partial 落盘不再依赖会话。监督对账是**增强**（有会话才做），不是**前置条件**。
+    //   没有会话时如实标注 supervisorPresent:false，让读者知道「这轮没有对账」而不是「对账通过」。
+    try { fs.mkdirSync(OUT, { recursive: true }); } catch (_) {}
+    result.partial = true;
+    result.abortedAt = (err && err.message) || String(err);
+    result.endedAt = new Date().toISOString();
+    const hasSup = !!(Sup && sup && sup.__enabled);
+    result.supervisorPresent = hasSup;
+    // ⚠ 2026-10-23 补（评审16 行为断言抓出）：加载失败留痕原先只写在主流程（:573），
+    //   而「模块加载失败」最需要留痕的场景恰恰是 FATAL —— FATAL 走 writePartialResult，
+    //   完全绕过主流程的写入点 → result.json 里 supervisorLoadError 恒为 undefined，
+    //   「监督器没接上」这一事实彻底不留痕（实测：隔离副本里改名 evolution-supervisor.cjs
+    //   后真跑 CLI，supervisorLoadError=undefined）。
+    //   守卫写在用不上的地方 = 守卫不存在。故 partial 路径必须自己写。
+    if (SUPERVISOR_LOAD_ERR) {
+      result.supervisorLoadError = SUPERVISOR_LOAD_ERR;
+      console.error('[verify] ⚠ 防偷懒监督器未接入：evolution-supervisor.cjs 加载失败（' + SUPERVISOR_LOAD_ERR + '）—— 本轮无监督对账/门禁');
+    }
+    if (hasSup) {
+      // 与主流程同一顺序纪律：先落盘提供执行证据，再对账（finalize 要读 result.json）
+      try {
+        result.features = result.features || [];
+        fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
+      } catch (_) {}
+      try { result.supervisor = Sup.finalize(sup, { claimed: result.claimed || {}, skipNotes: result.skipNotes || {}, strict: !!opt.strict, resultPath: OUT + '/result.json' }); } catch (fe) { result.supervisorError = (fe && fe.message) || String(fe); }
+    }
+    // ⚠ 2026-10-23 加固（评审15 指出「不能静默丢」）：本行是 FATAL 场景下**唯一的证据出口**，
+    //   若它失败只 console.error，等于整轮结果彻底蒸发且磁盘无痕。
+    //   故兜底再写一个 result.partial-fallback.json（哪怕磁盘也满，至少尝试一次 + 控制台明确告警）。
+    try {
+      fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
+    } catch (we) {
+      const msg = (we && we.message) || String(we);
+      result.partialWriteError = msg;
+      console.error('[verify] partial 落盘失败（FATAL 原始错误已保留在 result.abortedAt，未被覆盖）:', msg);
+      try {
+        fs.writeFileSync(OUT + '/result.partial-fallback.json', JSON.stringify(result, null, 2));
+        console.error('[verify] 已降级落盘 result.partial-fallback.json（partialWriteError=' + msg + '）');
+      } catch (we2) {
+        console.error('[verify] 兜底落盘亦失败，本轮结果无法留痕:', (we2 && we2.message) || we2);
+      }
+    }
+  } catch (we) { console.error('[verify] partial 落盘失败（原 FATAL 错误已保留在 result.abortedAt，未被覆盖）:', (we && we.message) || we); }
+}
+if (require.main !== module) {
+  module.exports = { collectClaimsAndSkipNotes, warnSameNameFeatures, writePartialResult };
+  return;
+}
+
 // 自动定位 playwright-core（源码内零硬编码路径）：
 //   env PW_CORE → require.resolve → 与当前 node 同级 / WorkBuddy 托管各版本 / 全局 npm → 明确报错
 function resolvePwCore() {
@@ -57,7 +150,7 @@ const opt = {
   ablate: 0, ablationOut: null, ai: 'off',
   driver: 'browser', app: null, platform: 'android', caps: null,
   appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true, evolve: false,
-  skill: null, strictEnv: false, allowApi: false,
+  skill: null, strictEnv: false, strict: false, allowApi: false,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -87,6 +180,15 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--no-heal') opt.heal = false;
   else if (a === '--evolve') opt.evolve = args[++i] === 'on';
   else if (a === '--strict-env') opt.strictEnv = true;
+  // ⚠ 2026-10-23 修复（靶子站端到端 Run2-strict 实测暴露的第 5 个接线缺口）：
+  //   此前**从未解析 --strict**，opt.strict 恒 undefined → finalize 收到的 strict 恒 false
+  //   → reconcile-core gate 的 strict 分支（:552-554「合规跳过也升级为 FAIL」）**永远不触发**。
+  //   实测：Run2 与 Run2-strict 的 result.json 逐字段相同（都是 PASS_WITH_WARNINGS / blocked=false）。
+  //   后果：spec §4.2 步8 写死的「strict 下 skipped>0 升级 FAIL」在真实 CLI 上不可达、无法端到端验收；
+  //   且它与 --strict-env 是两个不同开关，别混：--strict 管监督对账门禁，--strict-env 管错误归因（环境噪声）。
+  //   ⚠ 语义提示：--strict 会在有合规跳过时判 FAIL（blocked=true），属**故意收紧**，
+  //   与 --strict-env 一样会改变判定，不要以为它只是"多打点日志"。
+  else if (a === '--strict') opt.strict = true;
   else if (a === '--allow-api') opt.allowApi = true;
 }
 // --skill：零代码验收其他 skill——自动定位其目录下的 spec 并跑完整验证
@@ -258,11 +360,26 @@ async function runStep(drv, step) { return _runStep(drv, step, CTX); }
 async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
 
 // ---------- 主流程 ----------
+// P1：防偷懒监督器接线（fail-open：加载失败不影响主流程）
+let Sup = null;
+// ⚠ SUPERVISOR_LOAD_ERR 的声明已上移到 writePartialResult 之前（见文件头注释：
+//   下游 FATAL 路径要用它，而 let 声明晚于函数定义会在 require 后直接调用时触发 TDZ 崩溃）。
+// ⚠ 2026-10-23 修复（此前是 P1 接线在真实运行中从未生效的根因）：
+//   原写法 require('./evolution-supervisor') 省略了扩展名，而 Node 的相对 require 只尝试
+//   .js/.json/.node，**不尝试 .cjs** → 永远 MODULE_NOT_FOUND → 被 catch 吞成 Sup=null →
+//   整条防偷懒监督器接线静默失效（fail-open 生效，但 fail-open 不该掩盖"接线根本没接上"）。
+//   为什么之前没发现：① 逻辑层 45/45 单测直接 require 带 .cjs 的完整路径，绕过了这行；
+//   ② 只有真实 CLI 端到端跑才会执行这行。逻辑层全绿 ≠ 接线真的接上了。
+//   同类写法已全仓审计：仅此一处（对比 evolution-host.cjs 用的是带 .cjs 的 SKILL_DIR 绝对拼接，可加载）。
+//   守卫：加载失败不再静默 —— 落到 result.supervisorLoadError，控制台显式告警，
+//   否则「忘了加扩展名」这类错误会再次以"看起来正常"的方式藏住。
+try { Sup = require('./evolution-supervisor.cjs'); } catch (_e) { Sup = null; SUPERVISOR_LOAD_ERR = (_e && _e.message) || String(_e); }
 (async () => {
   // v1.4.6：--ablate 时本进程仅作消融调度器，验证由分派出的独立子进程完成
   if (ABLATION_PARENT) { console.log('[verify] --ablate：本进程作为消融调度器，主流程不重复执行'); return; }
-  let result = { name: spec.name || spec.app || '未知软件', baseUrl: BASE, driver: opt.driver, startedAt: new Date().toISOString(), features: [] };
+  let result = { name: spec.name || spec.app || '未知软件', baseUrl: BASE, driver: opt.driver, startedAt: new Date().toISOString(), features: [], claimed: {}, skipNotes: {} };
   let drv;
+  let sup = null; // P1：防偷懒监督器会话（fail-open；声明在 try 外以便 catch 也能访问）
   const errors = []; // 全局错误（最终汇总）
   try {
     drv = loadDriver(opt.driver);
@@ -345,6 +462,26 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     }
 
     log('将验证 ' + selected.length + ' / ' + spec.features.length + ' 个功能点\n');
+
+    // P1：防偷懒监督器接线（fail-open）
+    try {
+      if (Sup) {
+        sup = Sup.start({
+          initial: spec.features.map(f => f.name || f.description),
+          host: (typeof evo !== 'undefined' ? evo : null),
+          enable: opt.supervisor !== false,
+        });
+      }
+    } catch (_e) { sup = null; }
+    // P1：收集 skipNotes（被过滤 feature）+ claimed（selected feature），键用 feature name（与 initial 的 description 对齐）
+    //     —— 抽成纯函数 collectClaimsAndSkipNotes（导出供单测，行为逐字节一致）
+    {
+      const collected = collectClaimsAndSkipNotes(spec, selected, opt);
+      result.claimed = collected.claimed;
+      result.skipNotes = collected.skipNotes;
+    }
+    // P1：同名 feature 警告（不阻塞；readExecutionLog 按 name 匹配，同名会碰撞）—— 抽成纯函数 warnSameNameFeatures
+    warnSameNameFeatures(spec, log);
 
     const allHeals = [];
     const envNoise = [];  // v1.4.3：环境噪声（与宿主无关的外部因素），单独记录、完整展示，不计入 FAIL
@@ -444,6 +581,58 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
     }
     if (result.healTotal) log('♻ 本次自愈 ' + result.healTotal + ' 处失效选择器（见报告「自愈记录」）');
 
+    // P1：防偷懒监督器对账（fail-open）
+    // ⚠ 2026-10-23 修复执行顺序（靶子站端到端实测暴露的第二个接线缺口）：
+    //   对账的执行证据主源就是宿主写的 result.json（reconcile-core.cjs:267 readExecutionLog ①）。
+    //   原顺序是「先 finalize 对账、再写 result.json」—— 对账时文件还不存在 → execLog.results 为空
+    //   → 每个契约 hasExecLog=false → 全部判 dangling → verdict=REJECT。
+    //   症状与「验证器偷懒/漏检」一模一样，根因却是「证据还没写出来」，两者必须能区分。
+    //   新顺序：① 先落盘一次（提供证据）② 对账（显式传 resultPath，不靠猜路径）③ 回填 supervisor 后二次落盘。
+    //   代价：result.json 写两次（几十 KB 级，耗时可忽略）；收益：对账拿的是真实执行证据而非猜测。
+    try {
+      if (SUPERVISOR_LOAD_ERR) {
+        // 加载失败必须留痕：否则「监督器没接上」在报告里与「监督器判定通过」长得一样，无法区分
+        result.supervisorLoadError = SUPERVISOR_LOAD_ERR;
+        log('⚠ 防偷懒监督器未接入：evolution-supervisor.cjs 加载失败（' + SUPERVISOR_LOAD_ERR + '）—— 本轮无监督对账/门禁');
+      }
+      if (Sup && sup && sup.__enabled) {
+        try { fs.mkdirSync(OUT, { recursive: true }); } catch (_) {}
+        fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
+        result.supervisor = Sup.finalize(sup, {
+          claimed: result.claimed || {},
+          skipNotes: result.skipNotes || {},
+          strict: !!opt.strict,
+          resultPath: OUT + '/result.json',
+        });
+        // ⚠ 2026-10-23 新增（评审15 指出）：二次落盘失败必须留痕，不能静默。
+        //   失败时磁盘上留下的是**第一次**写的 result.json（不含 supervisor 字段），
+        //   消费方按 `result.supervisor.verdict==='PASS'` 验收会读到 undefined → 判「Run1 失败」，
+        //   但根因是**写盘失败**、不是接线失败 —— 归因会错，且现场无从分辨。
+        //   故：把 supervisor 结论转成字符串单独落盘 + 落 supervisorWriteError 字段，
+        //   让「对账已产出但没落进 result.json」成为**可观测事实**，而不是静默降级。
+        try {
+          fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
+        } catch (we) {
+          const msg = (we && we.message) || String(we);
+          result.supervisorWriteError = msg;
+          const su = result.supervisor || {};
+          try {
+            fs.writeFileSync(OUT + '/result.supervisor.json', JSON.stringify({
+              warning: 'supervisor 已产出但回填 result.json 失败；本文件是唯一留存的对账结论',
+              writeError: msg,
+              supervisor: su,
+            }, null, 2));
+          } catch (_) {}
+          log('⚠ supervisor 结论回填 result.json 失败（' + msg + '）→ 已单独落盘 result.supervisor.json（verdict=' + String(su.verdict) + '）');
+        }
+      }
+    } catch (_e) {
+      // ⚠ 同上：这里以前也是静默吞。finalize 抛错时必须留痕，
+      //   否则「对账没跑成」与「对账跑成了没发现问题」在报告里完全一样。
+      result.supervisorError = (_e && _e.message) || String(_e);
+      log('⚠ 防偷懒监督对账失败（' + result.supervisorError + '）—— 本轮无监督门禁结论');
+    }
+
     fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 2));
     writeMarkdown(result, OUT + '/VERIFY-报告.md');
     writeHtml(result, OUT + '/VERIFY-报告.html');
@@ -490,6 +679,8 @@ async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
   } catch (e) {
     log('FATAL ' + (e && e.stack || e));
     evoTap(e, { taskId: 'verify', source: 'fatal' });
+    // P1：FATAL 也尽量落盘 partial + 对账（不掩盖原错误）—— 抽成纯函数 writePartialResult（导出供单测，行为逐字节一致）
+    writePartialResult(OUT, result, sup, Sup, opt, e);
   } finally {
     if (drv) await drv.close().catch(() => {});
   }
