@@ -38,6 +38,9 @@ evolution/visual-baselines/
 # 发布包产物
 *.zip
 
+# 反证实验残留（T7 死循环反证 G1–G18；gh_publish.py 已按 _probe 前缀排除，这里再兜底防 git 误提交）
+_probe*/
+
 # Python 缓存（打包/编辑过程残留）
 __pycache__/
 *.pyc
