@@ -402,8 +402,23 @@ function reconcile(session, execLog, opts) {
 
     for (const it of (session && session.items) || []) {
       const hasLog = executed.has(it.id);
-      const skipReason = skipNotes[it.id] || null;
-      const selfClaim = claimed[it.id] === 'completed';
+      // ⚠ 2026-10-23 双键兼容（评审18 用户质询后加，防"同步本身制造故障"）：
+      //   键从 it.id 改为 it.description 是为了与 verify.cjs 的 collectClaimsAndSkipNotes 对齐
+      //   （该函数键用 feature name）。但**两版 verify.cjs 会长期并存**：
+      //     · 新版 verify.cjs  → 键是 description
+      //     · 旧版 verify.cjs  → 无 collectClaimsAndSkipNotes（或键是 id）
+      //   若只读 description，遇到旧版宿主会读到 undefined → skipNote 取不到 →
+      //   合规跳过退化成 dangling → **verdict=REJECT**（"所有契约漏检"）。
+      //   而三端同步是**逐文件 PUT、非原子**（gh_publish.py upload_file 每次一次 contents API），
+      //   必然存在「reconcile-core 已更新、verify.cjs 还没更新」的窗口期。
+      //   双键读取让 reconcile-core **可以单独安全同步**，窗口期不再是故障窗口。
+      //   读取顺序：description 优先（新版口径），id 兜底（旧版口径）。
+      //   ⚠ 必须挡 undefined：it.id 不存在时 skipNotes[undefined] 会命中 'undefined' 这个键
+      //   （对象取不存在键返回 undefined，若表里恰好有 'undefined' 键就会误配）→ 这里显式判存在。
+      const skipReason = (it.description != null ? skipNotes[it.description] : undefined)
+        || (it.id != null ? skipNotes[it.id] : undefined) || null;
+      const selfClaim = (it.description != null && claimed[it.description] === 'completed')
+        || (it.id != null && claimed[it.id] === 'completed');
 
       let status;
       if (hasLog) {
@@ -536,7 +551,7 @@ function renderAuditBlock(session, recon) {
  * 门禁：决定能否放行落盘。
  * @returns {{allow:boolean, verdict:string, banner:string|null, block:string}}
  */
-function gate(session, recon) {
+function gate(session, recon, opts) {
   try {
     // ⚠ recon 缺失 → 保守拒绝。默认值不能是 PASS：
     //   「拿不到对账结果」不等于「一切正常」（2026-10-21 修正）。
@@ -549,13 +564,19 @@ function gate(session, recon) {
       };
     }
     const r = recon;
+    // P1：strict 模式——合规跳过也升级为 FAIL（唯一消费点；reconcile 不动 verdict）
+    const strict = !!(opts && opts.strict);
+    if (strict && r.skipped > 0 && r.verdict !== 'REJECT') {
+      r.verdict = 'FAIL';
+    }
     const block = renderAuditBlock(session, r);
-    const banner = r.verdict === 'REJECT'
-      ? '⚠️ 监督审计未通过：存在漏检项，报告不得落盘'
+    const blocked = r.verdict === 'REJECT' || r.verdict === 'FAIL';
+    const banner = blocked
+      ? '⚠️ 监督审计未通过：' + (r.verdict === 'REJECT' ? '存在漏检项，报告不得落盘' : 'strict 模式下存在合规跳过，判 FAIL')
       : null;
     return {
-      allow: r.verdict !== 'REJECT',
-      mustReject: r.verdict === 'REJECT',
+      allow: !blocked,
+      mustReject: blocked,
       verdict: r.verdict,
       banner,
       block,
