@@ -132,12 +132,18 @@ function finalize(session, opts) {
     if (!core) return { enabled: false, reason: 'plugin_missing' };
 
     const o = opts || {};
-    const execLog = core.readExecutionLog(session.__dataDir || getDataDir(null));
+    // ⚠ 2026-10-23 新增 resultPath 透传（靶子站端到端实测暴露的第二个接线缺口）：
+    //   对账的执行证据主源是宿主写的 result.json，而此前这里只能「猜路径」
+    //   （guessResultPath 只找 dataDir 及其上溯三层下的 verify_report/result.json 或 result.json）。
+    //   verify.cjs 的 --out 可指定任意目录 → 猜不到 → execLog.results 为空 →
+    //   每个契约都 hasExecLog=false → 哪怕全部跑过也全判 dangling → verdict=REJECT。
+    //   症状与「验证器偷懒」完全一样，但根因是读不到证据 —— 必须让宿主显式告诉它证据在哪。
+    const execLog = core.readExecutionLog(session.__dataDir || getDataDir(null), o.resultPath || null);
     const recon = core.reconcile(session, execLog, {
       claimed: o.claimed || {},
       skipNotes: o.skipNotes || {},
     });
-    const g = core.gate(session, recon);
+    const g = core.gate(session, recon, { strict: !!o.strict });
 
     return {
       enabled: true,
