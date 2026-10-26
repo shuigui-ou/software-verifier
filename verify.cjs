@@ -115,7 +115,7 @@ function writePartialResult(OUT, result, sup, Sup, opt, err) {
   } catch (we) { console.error('[verify] partial 落盘失败（原 FATAL 错误已保留在 result.abortedAt，未被覆盖）:', (we && we.message) || we); }
 }
 if (require.main !== module) {
-  module.exports = { collectClaimsAndSkipNotes, warnSameNameFeatures, writePartialResult };
+  module.exports = { collectClaimsAndSkipNotes, warnSameNameFeatures, writePartialResult, runQuestioningLoop, makeStdinIo };
   return;
 }
 
@@ -150,7 +150,7 @@ const opt = {
   ablate: 0, ablationOut: null, ai: 'off',
   driver: 'browser', app: null, platform: 'android', caps: null,
   appiumUrl: 'localhost', appiumPort: 4723, port: 9420, heal: true, evolve: false,
-  skill: null, strictEnv: false, strict: false, allowApi: false,
+  skill: null, strictEnv: false, strict: false, allowApi: false, question: false, noQuestion: false,
 };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -189,6 +189,15 @@ for (let i = 0; i < args.length; i++) {
   //   ⚠ 语义提示：--strict 会在有合规跳过时判 FAIL（blocked=true），属**故意收紧**，
   //   与 --strict-env 一样会改变判定，不要以为它只是"多打点日志"。
   else if (a === '--strict') opt.strict = true;
+  // v1.9.0：--question 交互式追问模式（人工环，CLI 专属）。
+  //   自动模式契约 = spec 功能点（initial，基线不变）；--question 让操作者在跑之前按 6 类测试点
+  //   逐类补充测试点，补充项以 questioning 来源入监督会话 → 与 initial 同等对账
+  //   （无执行日志且无跳过理由 → dangling → REJECT）。
+  //   ⚠ 与「spec 覆盖建议」严格分离：追问答案是人给的（入契约），覆盖建议是机器给的（不入契约）。
+  //   ⚠ 禁止经 MCP 暴露：MCP server 的 stdin 是 JSON-RPC 协议通道，子进程读 stdin 会啃协议流。
+  else if (a === '--question') opt.question = true;
+  // v1.10.0：--no-question 硬关（永不问；已存补充点仍静默自动注入）
+  else if (a === '--no-question') opt.noQuestion = true;
   else if (a === '--allow-api') opt.allowApi = true;
 }
 // --skill：零代码验收其他 skill——自动定位其目录下的 spec 并跑完整验证
@@ -211,7 +220,7 @@ if (!opt.spec && opt.skill) {
 }
 
 if (!opt.spec || !opt.url) {
-  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--skill <skill目录> 自动定位 spec] [--driver browser|electron|miniprogram|appium] [--out <dir>] [--evolve on] [--strict-env（把环境噪声也计入 FAIL）] [--allow-api（显式开启 api/openapi 网络步骤与断言）] [--exclude <功能ID,...>] [--ablate[=k]（受控消融：基线+去因子）] [--ablate-out <dir>]');
+  console.error('用法: node verify.cjs --spec <spec.json> --url <baseUrl> [--skill <skill目录> 自动定位 spec] [--driver browser|electron|miniprogram|appium] [--out <dir>] [--evolve on] [--strict-env（把环境噪声也计入 FAIL）] [--question（强制按 6 类重问，答案纳入对账）] [--no-question（硬关追问，不弹确认）] [--allow-api（显式开启 api/openapi 网络步骤与断言）] [--exclude <功能ID,...>] [--ablate[=k]（受控消融：基线+去因子）] [--ablate-out <dir>]');
   process.exit(2);
 }
 
@@ -359,6 +368,187 @@ const CTX = { BASE, SHOTS, SKILL_DIR, visualBase: visKey, toolIssues: [], allowA
 async function runStep(drv, step) { return _runStep(drv, step, CTX); }
 async function runAssert(drv, a) { return _runAssert(drv, a, CTX); }
 
+// ---------- v1.9.0：交互式追问（--question）----------
+// 设计口径（与用户确认的方案 A+C，2026-10-24）：
+//   · **保留「spec 即初始契约」基线**：--question 只做加法，绝不改写 initial；
+//   · 追问答案来自**人**（stdin）→ 入契约、受对账（无执行日志且无理由 → dangling）；
+//   · 机器猜测**不入契约**（会把「猜的」变成对账义务、制造假 FAIL 污染 verdict），
+//     机器只出 6 类覆盖建议（result.specCoverage）——建议与契约严格分离；
+//   · stdin 结束（EOF）/ 读不到 → 该类按「明确说无」处理，与人工回车同义；
+//   · 任何异常 → 记 result.questioning.error 后按「无补充」继续，绝不中断验证主流程。
+// io 可注入（单测用假 io 驱动**真实** Sup.nextQuestion/answer/seal，不碰真 stdin）。
+async function runQuestioningLoop(sup, Sup, logFn, io, ctx) {
+  const out = {
+    rounds: 0, added: 0, finished: false, seal: null, detail: [], error: null,
+    mode: null, gate: null, jit: [], prefs: null, optedOut: null,
+  };
+  const _io = io || makeStdinIo();
+  const c = ctx || {};
+  const force = !!c.force;
+  const noQuestion = !!c.noQuestion;
+  const specPath = c.specPath || null;
+  const spec = c.spec || null;
+  let Prefs = null;
+  let Core = null;
+  try { Prefs = require(path.join(__dirname, 'question-prefs.cjs')); } catch (_) { Prefs = null; }
+  try { Core = require(path.join(__dirname, 'plugins', 'anti-lazy-supervisor', 'reconcile-core.cjs')); } catch (_) { Core = null; }
+  let prefs = { optedOutStart: false, optedOutHard: false, supplements: {}, declinedCats: [] };
+  let dirty = false;
+  try {
+    if (Prefs && specPath) prefs = Prefs.load(specPath);
+    if (!prefs.supplements || typeof prefs.supplements !== 'object') prefs.supplements = {};
+    if (!Array.isArray(prefs.declinedCats)) prefs.declinedCats = [];
+
+    // ① 静默注入已存补充点（不问；含 --no-question 亦执行 = 「已知意见自动执行」）
+    for (const catK of Object.keys(prefs.supplements)) {
+      const pts = prefs.supplements[catK];
+      if (Array.isArray(pts) && pts.length) {
+        const r = Sup.answer(sup, catK, pts) || {};
+        out.added += (r.accepted || 0);
+      }
+    }
+
+    const canPrompt = force || !!c.isTTY;
+    if (noQuestion) {
+      out.mode = 'off';
+    } else if (!canPrompt) {
+      out.mode = 'auto_apply_only';
+    } else if (prefs.optedOutHard && !force) {
+      out.mode = 'suppressed_hard';
+    } else {
+      // ② 开头 gate（--question 强制则跳过 gate，直接全问）
+      let proceed = true;
+      if (!force && !prefs.optedOutStart) {
+        _io.print({ promptText: `
+【追问 · 开场】是否要为本次验证补充测试点（6 类：输入边界/状态转换/并发竞态/异常恢复/性能超时/安全注入）？
+  直接回车 = 不需要（以后本项目不再开头打扰）：` });
+        const g = await _io.readLine();
+        const gs = (g == null ? '' : String(g)).trim();
+        out.gate = gs;
+        if (gs === '' || /^(n|no|不|否|不需要|不用|跳过|skip)/i.test(gs)) {
+          prefs.optedOutStart = true; dirty = true; proceed = false; out.mode = 'gate_declined';
+        }
+      }
+      if (force) {
+        prefs.optedOutStart = false;
+        prefs.optedOutHard = false;
+        dirty = true;
+        if (out.mode === null) out.mode = 'forced';
+      }
+      // ③ 6 类逐类（跳过已拒类与已存补充点类；已存补充点在 ① 注入）
+      if (proceed && (force || !prefs.optedOutStart)) {
+        const cats = (Core && Core.CATEGORIES) || [];
+        let gaveThisPass = 0;
+        for (const cat of cats) {
+          const catK = cat.key;
+          if (!force && prefs.declinedCats.indexOf(catK) >= 0) continue;
+          if (!force && prefs.supplements[catK] && prefs.supplements[catK].length) continue;
+          _io.print({ categoryName: cat.name, round: 1, asked: cat.probes });
+          const line = await _io.readLine();
+          const answers = (line == null ? '' : String(line)).split(/[;；|]/).map(function (s) { return s.trim(); }).filter(Boolean);
+          const r = Sup.answer(sup, catK, answers) || {};
+          out.rounds += 1;
+          out.added += (r.accepted || 0);
+          out.detail.push({ category: catK, categoryName: cat.name, round: 1, answers: answers, accepted: r.accepted || 0 });
+          if (logFn) logFn('   追问[' + cat.name + ']：' + (answers.length ? '补充 ' + answers.join('；') + '（accepted ' + (r.accepted || 0) + '）' : '无补充'));
+          if (answers.length) {
+            prefs.supplements[catK] = answers; gaveThisPass += answers.length; dirty = true;
+          } else if (!force && prefs.declinedCats.indexOf(catK) < 0) {
+            prefs.declinedCats.push(catK); dirty = true;
+          }
+        }
+        if (!force && gaveThisPass === 0 && cats.length > 0 && prefs.declinedCats.length >= cats.length) {
+          prefs.optedOutStart = true; dirty = true;
+        }
+        if (out.mode === null) out.mode = 'engaged';
+      }
+      // ④ JIT：未表态且 spec 关键词命中 → 只问那类一次；拒 → 全局硬关（察觉意愿）
+      if (!prefs.optedOutHard || force) {
+        let specCov = [];
+        if (Core && typeof Core.suggestCoverage === 'function' && spec && Array.isArray(spec.features)) {
+          const descs = spec.features.map(function (f) {
+            return [f && f.name, f && f.description, f && f.group].filter(Boolean).join(' ');
+          });
+          specCov = Core.suggestCoverage(descs);
+        }
+        for (const cc of specCov) {
+          if (!cc || !cc.covered) continue;
+          if (prefs.supplements[cc.key] && prefs.supplements[cc.key].length) continue;
+          if (prefs.declinedCats.indexOf(cc.key) >= 0) continue;
+          _io.print({ promptText: `
+【追问 · 新需求 · ` + (cc.name || cc.key) + `】spec 里出现了「` + (cc.name || cc.key) + `」相关功能，但你还没表态。
+  要补充这类测试点吗？逐条列出（；分隔）；直接回车 = 以后不再问：` });
+          const line = await _io.readLine();
+          const answers = (line == null ? '' : String(line)).split(/[;；|]/).map(function (s) { return s.trim(); }).filter(Boolean);
+          if (!answers.length) {
+            prefs.optedOutHard = true; dirty = true;
+            out.jit.push({ category: cc.key, refused: true });
+            if (logFn) logFn('   JIT追问[' + (cc.name || cc.key) + ']：用户拒绝 → 全局不再追问');
+            break;
+          }
+          const r = Sup.answer(sup, cc.key, answers) || {};
+          out.rounds += 1; out.added += (r.accepted || 0);
+          prefs.supplements[cc.key] = answers; dirty = true;
+          out.jit.push({ category: cc.key, refused: false, accepted: r.accepted || 0 });
+          if (logFn) logFn('   JIT追问[' + (cc.name || cc.key) + ']：补充 ' + answers.join('；'));
+        }
+      }
+    }
+    if (out.mode === null) out.mode = out.jit.length ? 'jit_only' : 'silent';
+    // ⑤ 收敛 + 落盘（仅在有变更时写，避免非交互 CI 每跑一次写文件）
+    const s = Sup.seal(sup) || {};
+    out.seal = { written: s.written || 0, hostOk: !!s.hostOk, reason: s.reason || null };
+    out.finished = !Sup.nextQuestion(sup);
+    out.optedOut = { start: !!prefs.optedOutStart, hard: !!prefs.optedOutHard };
+    out.prefs = { supplements: Object.keys(prefs.supplements), declinedCats: prefs.declinedCats.slice() };
+    if (Prefs && specPath && dirty) {
+      try { Prefs.save(specPath, prefs); } catch (_) { }
+    }
+  } catch (e) {
+    out.error = (e && e.message) || String(e);
+  }
+  return out;
+}
+// 默认 io：真 stdin（readline）。input 可注入（单测传内存流）。
+// 非 TTY（管道/重定向）设 30s 防挂死；TTY（真人在场）不设超时——交互模式本来就要等人。
+function makeStdinIo(input) {
+  const inp = input || process.stdin;
+  const print = function (q) {
+    try {
+      if (q && typeof q.promptText === 'string') { process.stdout.write(q.promptText); return; }
+      process.stdout.write('\n【追问 · ' + ((q && q.categoryName) || '') + ' · 第' + ((q && q.round) || 0) + '轮】当前验证计划是否覆盖：'
+        + ((q && q.asked) || []).join('、') + '？\n  逐条列出具体测试点（；分隔），确无请直接回车：');
+    } catch (_) {}
+  };
+  let rl = null;
+  let closed = false; // stdin 关闭后 readline 的 close 不会再触发第二次 → 必须记标志，否则后续 readLine 只能干等超时
+  const readLine = function () {
+    return new Promise(function (resolve) {
+      let timer = null;
+      if (closed) { resolve(null); return; }
+      try {
+        if (!rl) {
+          rl = require('readline').createInterface({ input: inp, terminal: false });
+          rl.on('close', function () { closed = true; }); // 只在创建时注册一次（防监听器累积）
+        }
+        let settled = false;
+        function onLine(l) { done(l); }
+        function onClose() { done(null); }
+        function cleanup() {
+          if (timer) { clearTimeout(timer); timer = null; }
+          rl.removeListener('line', onLine);
+          rl.removeListener('close', onClose);
+        }
+        function done(v) { if (settled) return; settled = true; cleanup(); resolve(v); }
+        rl.on('line', onLine);
+        rl.on('close', onClose);
+        if (!inp.isTTY) { timer = setTimeout(function () { done(null); }, 30000); if (timer.unref) timer.unref(); }
+      } catch (e) { resolve(null); }
+    });
+  };
+  return { print: print, readLine: readLine };
+}
+
 // ---------- 主流程 ----------
 // P1：防偷懒监督器接线（fail-open：加载失败不影响主流程）
 let Sup = null;
@@ -473,6 +663,37 @@ try { Sup = require('./evolution-supervisor.cjs'); } catch (_e) { Sup = null; SU
         });
       }
     } catch (_e) { sup = null; }
+    // v1.10.0：交互式追问默认开（TTY 才问；--question 强制、--no-question 硬关）
+    //   口径：已知补充点静默自动注入；开头 gate 可一次拒（软拒，JIT 仍可问）；
+    //   JIT 命中 spec 已有维度才问一次；JIT 拒绝 → 全局硬关（察觉意愿）。
+    if (Sup && sup && sup.__enabled) {
+      try {
+        result.questioning = await runQuestioningLoop(sup, Sup, log, null, {
+          specPath: opt.spec,
+          spec: spec,
+          force: !!opt.question,
+          noQuestion: !!opt.noQuestion,
+          isTTY: !!(process.stdin && process.stdin.isTTY),
+        });
+        const qd = result.questioning || {};
+        if (qd.error) log('⚠ 追问循环异常（' + qd.error + '）—— 按「无补充」继续，不影响主流程');
+        else if (qd.mode === 'off') log('🗣 追问已硬关（--no-question）：不弹确认；已存补充点自动注入' + (qd.added ? ' ' + qd.added + ' 项' : ''));
+        else if (qd.mode === 'auto_apply_only') log('🗣 非交互环境：跳过追问确认（已存补充点自动注入 ' + (qd.added || 0) + ' 项）');
+        else if (qd.mode === 'suppressed_hard') log('🗣 追问已按历史拒绝全局静默（不再打扰；--question 可覆盖）');
+        else if (qd.added) log('🗣 追问：补充 ' + qd.added + ' 项契约（纳入对账：无执行日志且无跳过理由 → dangling → REJECT）');
+        else log('🗣 追问：本次无补充（契约仍为 spec 功能点）');
+      } catch (qe) {
+        result.questioning = { error: (qe && qe.message) || String(qe) };
+        log('⚠ 追问循环异常（' + result.questioning.error + '）—— 按「无补充」继续');
+      }
+    }
+    // v1.9.0：6 类覆盖建议——机器不猜契约（猜的入契约 = 制造假 FAIL），只指出 spec 盲区；
+    //   建议进 result.specCoverage 与报告建议段，不入 session、不影响 verdict。
+    try {
+      if (Sup && sup && sup.__enabled && typeof Sup.coverage === 'function') {
+        result.specCoverage = Sup.coverage(sup);
+      }
+    } catch (_ce) { result.specCoverage = { enabled: false, reason: (_ce && _ce.message) || String(_ce) }; }
     // P1：收集 skipNotes（被过滤 feature）+ claimed（selected feature），键用 feature name（与 initial 的 description 对齐）
     //     —— 抽成纯函数 collectClaimsAndSkipNotes（导出供单测，行为逐字节一致）
     {
@@ -757,6 +978,31 @@ function writeMarkdown(r, file) {
   //   · 插件缺失 → 完全降级，宿主行为与改动前**逐字节相同**
   //   · 插件自身抛错 → 只记 toolIssues，绝不中断验证
   //   · 未启用（默认）→ 不注入、不拦截
+  // v1.9.0：spec 覆盖建议（6 类盲区 · 启发式 · 只建议不入契约 · 不影响 verdict）
+  if (r.specCoverage && r.specCoverage.enabled && Array.isArray(r.specCoverage.categories)) {
+    const gaps = r.specCoverage.categories.filter(function (c) { return !c.covered; });
+    md += '\n## spec 覆盖建议（6 类测试点盲区 · 启发式 · 不影响判定）\n\n';
+    md += '对契约描述做关键词启发式检查，指出 spec 可能没覆盖的测试点类别。**这只是给 spec 作者的建议**：不进入契约、不参与对账、不影响 verdict；关键词匹配可能误判，请人工复核。\n\n';
+    md += '| 类别 | 覆盖情况 | 建议补充的探测点 |\n|---|---|---|\n';
+    for (const c of r.specCoverage.categories) {
+      md += '| ' + c.name + ' | ' + (c.covered ? '✅ 已覆盖' : '⚠ 未见覆盖') + ' | ' + (c.probes || []).join('、') + ' |\n';
+    }
+    md += '\n' + (gaps.length ? ('共 ' + gaps.length + ' 类未见覆盖：' + gaps.map(function (g) { return g.name; }).join('、') + '。可补充进 spec 后重跑。') : '6 类均见覆盖（启发式结论，仍建议人工过一遍）。') + '\n';
+  }
+  // v1.9.0：交互式追问记录（--question）
+  if (r.questioning && (r.questioning.rounds || r.questioning.mode)) {
+    md += '\n## 交互式追问记录（--question）\n\n';
+    md += '- 追问轮数：' + r.questioning.rounds + ' · 补充契约：' + (r.questioning.added || 0) + ' 项\n';
+    md += '- 追问补充的契约与 spec 初始契约**同等对账**：无执行日志且无跳过理由 → dangling → REJECT\n';
+    for (const d of (r.questioning.detail || [])) {
+      md += '- [' + d.categoryName + '·第' + d.round + '轮] ' + ((d.answers && d.answers.length) ? d.answers.join('；') : '（明确无补充）') + '\n';
+    }
+    if (r.questioning.mode) md += '- 运行模式：' + r.questioning.mode + String.fromCharCode(10);
+    if (r.questioning.optedOut) md += '- 意见记忆：开头软拒=' + r.questioning.optedOut.start + ' · 全局硬关=' + r.questioning.optedOut.hard + String.fromCharCode(10);
+    const sl = r.questioning.seal;
+    if (sl && sl.written > 0) md += '- 已写入宿主 tapPlan：' + sl.written + ' 条\n';
+    else if (sl && sl.reason) md += '- 未写入 tapPlan（' + sl.reason + '）——契约仍在会话内，对账不受影响\n';
+  }
   const sup = r && r.supervisor;
   if (sup && sup.enabled && sup.block) {
     if (sup.banner) md = String(sup.banner) + '\n\n' + md;
