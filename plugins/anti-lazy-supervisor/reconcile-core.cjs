@@ -385,16 +385,29 @@ function reconcile(session, execLog, opts) {
         }
       }
     }
-    // ② ledger / audit —— 辅源
+    // ② ledger / audit —— **仅作辅证，不作执行证据**（2026-10-26 D2 修复，v1.11.0）
+    //
+    // 历史缺陷（真机暴露，本地已复现）：这里曾把匹配到的账本条目直接 add 进 executed。
+    // 而 sealQuestioning 本身就会用 host.tapPlan 给**每条**契约写一条
+    //   `[契约] <类别> · <描述>`，ledger='plan'、status='open'、closed_at=null、
+    //   detail=`source=…;id=contract_xxx`
+    // 于是「登记契约」这个动作自己产出了「已执行」的证据 → 任何契约（包括从未执行的
+    // 人工补充项）都被判 completed，dangling 恒为 0，**REJECT 不可达**。
+    // 裸基线复现：_scaffolding/_repro_plan_self_cert.cjs
+    //   （只写计划条目、result.json 的 features 为空 → 契约仍判 completed + hasExecLog=true）
+    //
+    // 修法依据就在本文件 readExecutionLog 的注释里：账本里只有落差与错误记录，
+    // 「只有落差记录不能证明功能点跑过」。既然不能证明，就不能拿来给契约发通行证。
+    // 现在它们只累计 corroboration（辅证条数）供报告展示，**一律不影响 status**。
+    let corroboration = 0;
     for (const e of (log.ledger || [])) {
       const hay = `${e.title || ''} ${e.detail || ''}`;
-      for (const it of items) if (matchOne(hay, it)) executed.add(it.id);
+      for (const it of items) if (matchOne(hay, it)) { corroboration += 1; break; }
     }
-    // 审计链里出现过的也算（HOST_TAP_P / HOST_TAP_I）
     for (const a of (log.audit || [])) {
       const pl = a.payload || {};
       const hay = `${pl.title || ''} ${pl.detail || ''} ${JSON.stringify(pl.payload || {})}`;
-      for (const it of items) if (matchOne(hay, it)) executed.add(it.id);
+      for (const it of items) if (matchOne(hay, it)) { corroboration += 1; break; }
     }
 
     const details = [];
@@ -496,6 +509,12 @@ function reconcile(session, execLog, opts) {
       details,
       logAvailable: !!(log.available),
       logReason: log.reason || null,
+      // 执行证据源（v1.11.0 起成为判定事实而不仅是标注）：
+      //   feature_results = 有 result.json 功能点 → 唯一可判 completed 的来源
+      //   gaps_only       = 只有账本落差 → **不得判完成**，契约会全部落 dangling
+      //   none            = 没有任何日志 → 同上
+      evidenceKind: log.evidenceKind || (log.results && log.results.length ? 'feature_results' : 'none'),
+      corroboration,
     };
   } catch (e) {
     return {
@@ -536,6 +555,11 @@ function renderAuditBlock(session, recon) {
   lines.push(`- 合规跳过：${r.skipped}`);
   lines.push(`- 额外执行（契约外）：${r.untracked}`);
   lines.push(`- 漏检：${r.dangling}`);
+  if (r.evidenceKind && r.evidenceKind !== 'feature_results') {
+    // 证据源不是功能点结果时必须写在台账上：否则「契约全 dangling」看起来像验证器偷懒，
+    // 实际是「没有可采信的执行证据」——两者必须能区分（否则归因会错）。
+    lines.push(`- 执行证据源：${r.evidenceKind}（无功能点执行证据 → 契约一律不得判完成；账本辅证 ${r.corroboration || 0} 条不计入）`);
+  }
   for (const d of (r.details || []).filter((x) => x.status === 'dangling')) {
     lines.push(`  - [dangling] ${(CAT_MAP[d.category] || {}).name || d.category} · ${d.description}`
       + (d.claimedByVerifier ? ' —— 声称测过但无日志' : ' —— 无执行日志'));
