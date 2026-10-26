@@ -520,32 +520,54 @@ function makeStdinIo(input) {
         + ((q && q.asked) || []).join('、') + '？\n  逐条列出具体测试点（；分隔），确无请直接回车：');
     } catch (_) {}
   };
+// v1.10.1 修复：连续 readLine 在管道 stdin 下丢行（真浏览器端到端冒烟暴露）
+// 根因：旧实现每次 readLine 都 rl.on('line') 后立刻在 cleanup 里 removeListener。
+//   readline 在 terminal:false 下会把整块数据一次性拆成多行连续 emit，而两行之间
+//   **没有监听器在场** → 第 2 行起全部落到空处（连 close 都读不到），静默返回 null。
+//   后果不是"报错"，是 --question 在 CI/管道里只收第 1 条答案、其余全判「无补充」，
+//   JIT 更会把 EOF 当「用户拒绝」→ 落盘 optedOutHard 全局封口，比丢答案更严重。
+// 修法：常驻监听 + 队列。rl 只建一次，line 事件永久写入 queue；readLine 优先取队列，
+//   队列空才排队等待。这样「一次进来 6 行」和「人一行一行敲」两种输入都正确。
+// 裸基线复现见 _scaffolding/_repro_stdin_lines.cjs（喂 4 行旧实现只读到 1 行）。
   let rl = null;
   let closed = false; // stdin 关闭后 readline 的 close 不会再触发第二次 → 必须记标志，否则后续 readLine 只能干等超时
+  const queue = [];   // 已到达但尚未被消费的行（关键：不能靠临时监听器接，否则同一块数据里的后续行会丢）
+  const waiters = []; // 队列空时正在等下一行的 resolve 回调
+  function ensureRl() {
+    if (rl) return rl;
+    rl = require('readline').createInterface({ input: inp, terminal: false });
+    // 只在创建时注册一次（防监听器累积）：有等待者就直接交付，否则入队
+    rl.on('line', function (l) {
+      if (waiters.length) waiters.shift()(l);
+      else queue.push(l);
+    });
+    rl.on('close', function () {
+      closed = true;
+      while (waiters.length) waiters.shift()(null);
+    });
+    return rl;
+  }
   const readLine = function () {
     return new Promise(function (resolve) {
-      let timer = null;
+      if (queue.length) { resolve(queue.shift()); return; }
       if (closed) { resolve(null); return; }
-      try {
-        if (!rl) {
-          rl = require('readline').createInterface({ input: inp, terminal: false });
-          rl.on('close', function () { closed = true; }); // 只在创建时注册一次（防监听器累积）
-        }
-        let settled = false;
-        function onLine(l) { done(l); }
-        function onClose() { done(null); }
-        function cleanup() {
-          if (timer) { clearTimeout(timer); timer = null; }
-          rl.removeListener('line', onLine);
-          rl.removeListener('close', onClose);
-        }
-        function done(v) { if (settled) return; settled = true; cleanup(); resolve(v); }
-        rl.on('line', onLine);
-        rl.on('close', onClose);
-        if (!inp.isTTY) { timer = setTimeout(function () { done(null); }, 30000); if (timer.unref) timer.unref(); }
-      } catch (e) { resolve(null); }
+      let timer = null;
+      let settled = false;
+      function done(v) {
+        if (settled) return;
+        settled = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        const i = waiters.indexOf(waiter);
+        if (i >= 0) waiters.splice(i, 1);
+        resolve(v);
+      }
+      function waiter(v) { done(v); }
+      waiters.push(waiter);
+      try { ensureRl(); } catch (e) { done(null); return; }
+      if (!inp.isTTY) { timer = setTimeout(function () { done(null); }, 30000); if (timer.unref) timer.unref(); }
     });
   };
+
   return { print: print, readLine: readLine };
 }
 
