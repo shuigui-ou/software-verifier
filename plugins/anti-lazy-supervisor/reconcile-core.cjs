@@ -613,6 +613,45 @@ function injectReport(reportText, session, recon) {
 }
 
 // ── 导出 ──────────────────────────────────────────────────────
+// ── 6 类覆盖检查（建议用 · v1.9.0 新增）──────────────────────────
+// ⚠ 与契约严格分离的三条理由（写进注释，防后人顺手把它接进 session.items）：
+//   ① 关键词匹配是**启发式**，会把「碰巧含关键词」的无关功能点判成已覆盖，也会漏掉
+//      换了说法的覆盖（如「容错」vs「异常恢复」）——它不够格当契约判据；
+//   ② 机器猜的测试点一旦入契约，就变成对账义务：没跑 → dangling → REJECT，
+//      等于用猜测制造假 FAIL 污染 verdict（比不猜更糟）；
+//   ③ 它的正确用途是**给 spec 作者看的盲区清单**：指出「你这份 spec 6 类里哪类
+//      连一条都没提」，让人决定补不补、怎么补——决策权留给人。
+// 出口只有两个：result.specCoverage 与报告「spec 覆盖建议」段。**绝不进 reconcile/gate**。
+const CATEGORY_KEYWORDS = {
+  input: ['空值', '空输入', '为空', '超长', '特殊字符', '负数', 'null', 'undefined', '边界', '非法输入', '输入校验', '必填', '格式'],
+  state: ['状态', '切换', '回退', '重入', '中间态', '跳转', '返回', '撤销', '重置'],
+  concurrency: ['并发', '竞态', '重复提交', '同时', '多开', '双击', '连点', '锁'],
+  error: ['异常', '错误', '超时', '重试', '降级', '失败', '断网', '容错', '提示'],
+  performance: ['性能', '响应时间', '耗时', '大数据', '内存', '卡顿', '加载速度', '批量'],
+  security: ['注入', '越权', '权限', '敏感信息', '泄露', '路径穿越', 'xss', 'sql', '鉴权', '未登录', '登录态'],
+};
+
+/**
+ * 6 类覆盖检查（纯函数 · 建议用 · 不影响任何 verdict）。
+ * @param items 契约数组（session.items，元素含 description）或字符串数组
+ * @returns [{key,name,probes,covered,matched}] 每类一项；matched=命中关键词的契约描述（供人复核）
+ */
+function suggestCoverage(items) {
+  const arr = Array.isArray(items) ? items : [];
+  const descs = arr.map(function (x) {
+    const d = (x && x.description != null) ? x.description : x;
+    return String(d == null ? '' : d).toLowerCase();
+  }).filter(Boolean);
+  return CATEGORIES.map(function (c) {
+    const kws = CATEGORY_KEYWORDS[c.key] || [];
+    const matched = [];
+    for (const d of descs) {
+      if (kws.some(function (k) { return d.indexOf(String(k).toLowerCase()) >= 0; })) matched.push(d);
+    }
+    return { key: c.key, name: c.name, probes: c.probes, covered: matched.length > 0, matched: matched.slice(0, 5) };
+  });
+}
+
 module.exports = {
   CATEGORIES,
   CAT_MAP,
@@ -624,6 +663,7 @@ module.exports = {
   sealQuestioning,
   readExecutionLog,
   reconcile,
+  suggestCoverage,
   renderAuditBlock,
   gate,
   injectReport,
