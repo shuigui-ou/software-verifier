@@ -22,10 +22,25 @@ function check(name, fn) {
 
 // ── 临时 dataDir，避免污染宿主 .evolution ──────────────────────
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'als-verify-'));
+// 每次改证据前先清场：否则上一条用例留下的 result.json 会串到下一条
+// （v1.11.0 起执行证据只认 result.json，不清场会让"无证据"的用例意外通过）。
+function clearEvidence() {
+  try { fs.rmSync(path.join(TMP, 'result.json'), { force: true }); } catch (_) {}
+}
 function writeLedger(entries) {
+  clearEvidence();
   fs.mkdirSync(path.join(TMP, 'ledger'), { recursive: true });
   fs.writeFileSync(path.join(TMP, 'ledger', 'ledger.jsonl'),
     entries.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+}
+/** 写「功能点真的跑过」的唯一证据源（= 宿主 verify.cjs 落盘的 result.json）。 */
+function writeResult(names) {
+  clearEvidence();
+  fs.mkdirSync(path.join(TMP, 'ledger'), { recursive: true });
+  fs.writeFileSync(path.join(TMP, 'ledger', 'ledger.jsonl'), '', 'utf-8');
+  fs.writeFileSync(path.join(TMP, 'result.json'), JSON.stringify({
+    features: (names || []).map((n, i) => ({ id: 'F' + i, name: n, pass: true, errors: [] })),
+  }), 'utf-8');
 }
 function writeAudit(entries) {
   fs.mkdirSync(path.join(TMP, 'audit'), { recursive: true });
@@ -95,12 +110,9 @@ check('2.1 准确识别 dangling 数量（方案示例：10 契约 / 7 执行 �
   assert.strictEqual(s.items.length, 10, '未凑够 10 项');
 
   const execCount = 7;                        // 只执行 7 项
-  const log = [];
-  for (let i = 0; i < execCount; i++) {
-    log.push({ id: 'L' + i, ledger: 'plan', title: '[契约] ' + s.items[i].description,
-               detail: 'id=' + s.items[i].id });
-  }
-  writeLedger(log);
+  // 执行证据必须来自 result.json 的功能点结果；账本里的 `[契约]` plan 条目是
+  // seal 阶段自己写的**计划**，不能充当执行证据（D2，2026-10-26）。
+  writeResult(s.items.slice(0, execCount).map((it) => it.description));
 
   const r = C.reconcile(s, C.readExecutionLog(TMP), {});
   assert.strictEqual(r.completed, 7, '应有 7 项完成');
@@ -109,8 +121,7 @@ check('2.1 准确识别 dangling 数量（方案示例：10 契约 / 7 执行 �
 });
 check('2.2 skipped 必须有理由，无理由不得算 skipped', () => {
   const s = fakeSession(['A', 'B']);
-  writeLedger([{ id: 'L1', ledger: 'plan', title: '[契约] ' + s.items[0].description,
-                 detail: 'id=' + s.items[0].id }]);
+  writeResult([s.items[0].description]);
   const exec = C.readExecutionLog(TMP);
 
   // 让除最后一项外全部带合法理由，只留最后一项测「无理由」
@@ -157,9 +168,8 @@ check('3.2 造假项带说明（claimedByVerifier=true）', () => {
 });
 check('3.3 部分造假：只有有日志的算 completed', () => {
   const s = fakeSession(['项A', '项B', '项C']);
-  // 只给第 2 条执行日志
-  writeLedger([{ id: 'L1', ledger: 'plan', title: '[契约] ' + s.items[1].description,
-                 detail: 'id=' + s.items[1].id }]);
+  // 只执行第 2 项（证据写进 result.json，不再用账本计划条目）
+  writeResult([s.items[1].description]);
   const exec = C.readExecutionLog(TMP);
   const r = C.reconcile(s, exec, {});
   assert.strictEqual(r.completed, 1, '应为 1 项完成');
@@ -173,7 +183,7 @@ check('3.3 部分造假：只有有日志的算 completed', () => {
 console.log('\n[验收4] 报告注入：区块由插件生成，数据与 ledger 一致');
 check('4.1 注入区块存在且含关键字段', () => {
   const s = fakeSession(['项A', '项B']);
-  writeLedger([{ id: 'L1', ledger: 'plan', title: '[契约] 项A', detail: 'id=' + s.items[0].id }]);
+  writeResult([s.items[0].description]);
   const r = C.reconcile(s, C.readExecutionLog(TMP), {});
   const out = C.injectReport('# 验证报告\n正文内容', s, r);
   assert.strictEqual(out.ok, true);
@@ -187,7 +197,7 @@ check('4.1 注入区块存在且含关键字段', () => {
 });
 check('4.2 区块数据与对账结果一致（不可篡改）', () => {
   const s = fakeSession(['项A', '项B', '项C']);
-  writeLedger([{ id: 'L1', ledger: 'plan', title: '[契约] 项A', detail: 'id=' + s.items[0].id }]);
+  writeResult([s.items[0].description]);
   const r = C.reconcile(s, C.readExecutionLog(TMP), {});
   const block = C.renderAuditBlock(s, r);
   assert.ok(block.includes(`实际完成：${r.completed}`), 'completed 数字不一致');
@@ -222,8 +232,7 @@ check('5.2 REJECT 时报告顶部有警告标记', () => {
 });
 check('5.3 全部 completed → PASS + 放行', () => {
   const s = fakeSession(['项A', '项B']);
-  const log = s.items.map((it, i) => ({ id: 'L' + i, ledger: 'plan', title: '[契约] ' + it.description, detail: 'id=' + it.id }));
-  writeLedger(log);
+  writeResult(s.items.map((it) => it.description));
   const r = C.reconcile(s, C.readExecutionLog(TMP), {});
   assert.strictEqual(r.dangling, 0);
   assert.strictEqual(r.verdict, 'PASS');
@@ -231,10 +240,8 @@ check('5.3 全部 completed → PASS + 放行', () => {
 });
 check('5.4 仅 skipped → PASS_WITH_WARNINGS + 放行', () => {
   const s = fakeSession(['项A', '项B']);
-  // 只给第 1 条执行日志，**其余全部**给跳过理由（否则会出现 dangling → REJECT）
-  const log = [{ id: 'L0', ledger: 'plan', title: '[契约] ' + s.items[0].description,
-                 detail: 'id=' + s.items[0].id }];
-  writeLedger(log);
+  // 只执行第 1 项（result.json 为证），**其余全部**给跳过理由（否则会出现 dangling → REJECT）
+  writeResult([s.items[0].description]);
   const notes = {};
   for (let i = 1; i < s.items.length; i++) notes[s.items[i].id] = '依赖不可用';
   const r = C.reconcile(s, C.readExecutionLog(TMP), { skipNotes: notes });
@@ -251,6 +258,10 @@ check('6.1 对账遇空 session 不抛错', () => {
   assert.strictEqual(r.verdict, 'REJECT');
 });
 check('6.2 readExecutionLog 指向不存在目录不抛错', () => {
+  // 必须先清场：guessResultPath 会从 dataDir 逐级向上找三层，
+  // 前面用例写在 TMP/result.json 的证据会被这条用例"顺手捡到"，
+  // 导致 available=true —— 那是夹具串味，不是被测函数的问题。
+  clearEvidence();
   const r = C.readExecutionLog(path.join(TMP, '不存在的目录'));
   assert.strictEqual(r.available, false);
   assert.ok(r.reason);
@@ -356,9 +367,10 @@ check('result.json 里的功能点能把契约判为 completed（关键：假阳
   fs.rmSync(tmpd, { recursive: true, force: true });
 });
 
-check('只有 ledger 无 result.json 时，不得把功能点误判为漏检', () => {
-  // 回归：初版正是这里全线误报。这里明确行为——认不出证据就如实标记，
-  // 不允许「静默判漏检」而让真实缺口混在里面。
+check('只有 ledger 无 result.json → evidenceKind=gaps_only，且**不得**判任何契约完成（v1.11.0 语义）', () => {
+  // v1.11.0 语义收紧：账本里只有落差/计划记录，不能证明功能点跑过 →
+  // 契约一律落 dangling。旧断言只检查了 evidenceKind 标注，没检查判定结果，
+  // 于是 D2（计划条目自我认证）可以长期藏在全绿下面。
   const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'als-res3-'));
   fs.mkdirSync(path.join(tmpd, 'ledger'), { recursive: true });
   fs.writeFileSync(path.join(tmpd, 'ledger', 'ledger.jsonl'),
@@ -367,7 +379,49 @@ check('只有 ledger 无 result.json 时，不得把功能点误判为漏检', (
   assert.ok(log.results.length === 0, '无 result.json 时 results 应为空，实际 ' + log.results.length);
   assert.ok(log.evidenceKind === 'gaps_only',
     '只有 ledger 时应标记为 gaps_only（不能当作跑过），实际: ' + log.evidenceKind);
+  const s = C.createQuestioning({ initial: ['登录正常流程'] });
+  const r = C.reconcile(s, log, {});
+  assert.strictEqual(r.completed, 0, '只有账本落差却判了 completed —— 红线失效');
+  assert.strictEqual(r.verdict, 'REJECT');
   fs.rmSync(tmpd, { recursive: true, force: true });
+});
+
+check('D2 回归：只有 [契约] plan 条目 → 契约不得判完成（计划不是执行）', () => {
+  // 钉死 2026-10-26 真机暴露的缺陷：sealQuestioning 用 host.tapPlan 给每条契约写
+  // `[契约] …`（ledger=plan / status=open / closed_at=null / detail 带 id=contract_xxx），
+  // reconcile 第②源曾把这些计划条目当执行证据 → 任何契约自动 completed、REJECT 不可达。
+  const s = C.createQuestioning({ initial: ['功能甲'] });
+  const c1 = s.items[0];
+  C.addContract(s, '从未执行过的测试点乙', 'input');
+  fs.mkdirSync(path.join(TMP, 'ledger'), { recursive: true });
+  fs.writeFileSync(path.join(TMP, 'ledger', 'ledger.jsonl'), JSON.stringify({
+    id: 'LG-1', ledger: 'plan',
+    title: '[契约] ' + c1.category + ' · ' + c1.description,
+    detail: 'source=' + c1.source + ';id=' + c1.id,
+    opened_at: new Date().toISOString(), closed_at: null, status: 'open', outcome: null,
+  }) + '\n', 'utf-8');
+  clearEvidence();
+  const r = C.reconcile(s, C.readExecutionLog(TMP), {});
+  assert.strictEqual(r.completed, 0, '计划条目被当成执行证据了（D2 复发）');
+  assert.strictEqual(r.dangling, 2);
+  assert.strictEqual(r.verdict, 'REJECT');
+  assert.ok(r.details.every((d) => d.hasExecLog === false), 'hasExecLog 不该为 true');
+});
+
+check('D2 回归：有 result.json 时，账本里的计划条目不会让未执行项蒙混过关', () => {
+  const s = C.createQuestioning({ initial: ['真的跑过的功能'] });
+  C.addContract(s, '只登记没执行的功能', 'input');
+  writeResult(['真的跑过的功能']);
+  fs.writeFileSync(path.join(TMP, 'ledger', 'ledger.jsonl'),
+    s.items.map((it) => JSON.stringify({ id: 'L-' + it.id, ledger: 'plan',
+      title: '[契约] ' + it.category + ' · ' + it.description,
+      detail: 'source=' + it.source + ';id=' + it.id, closed_at: null, status: 'open',
+    })).join('\n') + '\n', 'utf-8');
+  const r = C.reconcile(s, C.readExecutionLog(TMP), {});
+  assert.strictEqual(r.completed, 1, '只有真跑过的那 1 项算完成');
+  assert.strictEqual(r.dangling, 1, '只登记没执行的那项必须 dangling');
+  assert.strictEqual(r.verdict, 'REJECT');
+  assert.ok(r.corroboration >= 1, '账本应被记为辅证（corroboration）而非证据');
 });
 
 // ── 输出 ────────────────────────────────────────────────────────
