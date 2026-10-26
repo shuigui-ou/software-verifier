@@ -182,4 +182,22 @@ function status() {
   };
 }
 
-module.exports = { start, answer, nextQuestion, seal, finalize, watchTurn, status };
+/**
+ * 6 类覆盖检查（建议用 · v1.9.0 新增）。
+ * 与 start/answer/finalize 等同构：只消费 core、fail-open、不重造通道。
+ * ⚠ 覆盖缺口**绝不入契约**（机器猜的入契约 = 制造假 FAIL），只作为建议出口。
+ * @returns {enabled:true, categories:[...]} 或 {enabled:false, reason}
+ */
+function coverage(session) {
+  try {
+    if (!session) return { enabled: false, reason: 'no_session' };
+    const core = loadCore();
+    if (!core || typeof core.suggestCoverage !== 'function') return { enabled: false, reason: 'plugin_missing' };
+    const items = (session && session.items) || [];
+    return { enabled: true, categories: core.suggestCoverage(items) };
+  } catch (e) {
+    return { enabled: false, reason: String((e && e.message) || e) };
+  }
+}
+
+module.exports = { start, answer, nextQuestion, seal, finalize, coverage, watchTurn, status };
